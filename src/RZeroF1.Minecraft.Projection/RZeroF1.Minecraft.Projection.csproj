@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>RZeroF1.Minecraft.Projection</AssemblyName>
+    <RootNamespace>RZeroF1.Minecraft.Projection</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>true</IsPackable>
+    <PackageId>RZeroF1.Minecraft.Projection</PackageId>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0</PackageVersion>
+    <Version Condition="'$(Version)' == ''">$(PackageVersion)</Version>
+    <Authors>RZeroF1</Authors>
+    <Description>Windows x64 SDK for parsing Minecraft projections, loading game resources, building 3D meshes, slicing scenes and rendering through Direct3D 11.</Description>
+    <PackageTags>minecraft;projection;litematic;schem;d3d11;rendering;sdk</PackageTags>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
+    <PackageReleaseNotes>首个正式版本：提供 Litematica 与 Sponge 投影读取、Minecraft 资源加载、模型与网格构建、切片、相机、D3D11 渲染、PNG 截图和诊断 API。</PackageReleaseNotes>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/RZeroF1/WinUI-Minecraft-Projection</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/RZeroF1/WinUI-Minecraft-Projection</PackageProjectUrl>
+    <PackageOutputPath>$(RepositoryRoot)artifacts\packages\</PackageOutputPath>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <DebugType>portable</DebugType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.403" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(RepositoryRoot)README.md" Pack="true" PackagePath="" />
+    <None Include="$(RepositoryRoot)LICENSE" Pack="true" PackagePath="" />
+    <None Include="$(RepositoryRoot)THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="" />
+    <None Include="$(RepositoryRoot)docs\**\*" Pack="true" PackagePath="docs" />
+    <None Include="$(RepositoryRoot)licenses\**\*" Pack="true" PackagePath="licenses" />
+    <None Include="$(TargetDir)rzero_projection_d3d11.dll"
+          Pack="true"
+          PackagePath="runtimes\win-x64\native" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageDownload Include="Microsoft.WindowsAppSDK.WinUI" Version="[2.3.9]" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <ProjectionWinUiInclude>$(NuGetPackageRoot)\microsoft.windowsappsdk.winui\2.3.9\include</ProjectionWinUiInclude>
+  </PropertyGroup>
+
+  <Target Name="BuildProjectionNative"
+          BeforeTargets="PrepareForBuild"
+          Inputs="$(RepositoryRoot)native\projection\renderer.cpp;$(RepositoryRoot)native\projection\build.cmd;$(ProjectionWinUiInclude)\microsoft.ui.xaml.media.dxinterop.h"
+          Outputs="$(TargetDir)rzero_projection_d3d11.dll"
+          Condition="'$(ProjectionNativeRid)' == 'win-x64'">
+    <MakeDir Directories="$(TargetDir)" />
+    <Exec Command="&quot;$(RepositoryRoot)native\projection\build.cmd&quot; x64 &quot;$(TargetDir)&quot; &quot;$(ProjectionWinUiInclude)&quot;" />
+  </Target>
+
+  <Target Name="RejectUnsupportedProjectionRid"
+          BeforeTargets="Build"
+          Condition="'$(ProjectionNativeRid)' != 'win-x64'">
+    <Error Text="RZeroF1.Minecraft.Projection currently supports only win-x64; received $(ProjectionNativeRid)." />
+  </Target>
+</Project>

@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RZeroF1.Minecraft.Projection/RZeroF1.Minecraft.Projection.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RZeroF1.Minecraft.Projection.Tests/RZeroF1.Minecraft.Projection.Tests.csproj" />
+    <Project Path="tests/PackageConsumer/PackageConsumer.csproj" />
+  </Folder>
+  <Folder Name="/native/" />
+</Solution>

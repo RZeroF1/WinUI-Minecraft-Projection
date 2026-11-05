@@ -1,0 +1,8 @@
+**/bin/
+**/obj/
+.vs/
+AGENTS.md
+artifacts/packages/
+artifacts/test-results/
+*.user
+*.suo

@@ -1,0 +1,133 @@
+name: SDK CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Build, test and validate NuGet (win-x64)
+    runs-on: windows-2025
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Verify project metadata and notices
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $required = @(
+            'LICENSE',
+            'THIRD-PARTY-NOTICES.md',
+            'licenses/minecraft-renderer/LICENSE',
+            'licenses/minecraft-renderer/SOURCE.md',
+            'licenses/schematic-editor/LICENSE',
+            'licenses/schematic-editor/SOURCE.md'
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Missing required license/source document: $path"
+            }
+          }
+
+          $license = Get-Content -LiteralPath LICENSE -Raw
+          if ($license -notmatch 'Mozilla Public License') {
+            throw 'Project MPL license text was not found.'
+          }
+
+          foreach ($path in @('licenses/minecraft-renderer/LICENSE', 'licenses/schematic-editor/LICENSE')) {
+            if ((Get-Content -LiteralPath $path -Raw) -notmatch 'MIT License') {
+              throw "MIT license text was not found: $path"
+            }
+          }
+
+      - name: Build SDK (Release, win-x64)
+        shell: pwsh
+        run: dotnet build src/RZeroF1.Minecraft.Projection/RZeroF1.Minecraft.Projection.csproj -c Release -r win-x64 -nologo
+
+      - name: Pack NuGet
+        shell: pwsh
+        run: dotnet pack src/RZeroF1.Minecraft.Projection/RZeroF1.Minecraft.Projection.csproj -c Release -r win-x64 --no-restore -nologo
+
+      - name: Run SDK regression tests
+        shell: pwsh
+        run: dotnet run --project tests/RZeroF1.Minecraft.Projection.Tests/RZeroF1.Minecraft.Projection.Tests.csproj -c Release -r win-x64
+
+      - name: Inspect NuGet package and metadata
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression
+          $packages = @(Get-ChildItem -Path artifacts/packages -Filter '*.nupkg' -File)
+          $symbols = @(Get-ChildItem -Path artifacts/packages -Filter '*.snupkg' -File)
+          if ($packages.Count -ne 1 -or $symbols.Count -ne 1) {
+            throw "Expected one NuGet package and one symbols package; found $($packages.Count) and $($symbols.Count)."
+          }
+
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($packages[0].FullName)
+          try {
+            $entries = @($zip.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
+            $required = @(
+              'lib/net10.0/RZeroF1.Minecraft.Projection.dll',
+              'runtimes/win-x64/native/rzero_projection_d3d11.dll',
+              'LICENSE',
+              'THIRD-PARTY-NOTICES.md',
+              'licenses/minecraft-renderer/LICENSE',
+              'licenses/schematic-editor/LICENSE'
+            )
+            foreach ($path in $required) {
+              if ($path -notin $entries) {
+                throw "NuGet package is missing: $path"
+              }
+            }
+
+            $nuspec = $zip.Entries | Where-Object { $_.FullName -like '*.nuspec' } | Select-Object -First 1
+            if (-not $nuspec) { throw 'Missing NuGet manifest.' }
+            $reader = [System.IO.StreamReader]::new($nuspec.Open())
+            try { [xml] $metadata = $reader.ReadToEnd() }
+            finally { $reader.Dispose() }
+
+            $id = $metadata.SelectSingleNode("//*[local-name()='metadata']/*[local-name()='id']")
+            $version = $metadata.SelectSingleNode("//*[local-name()='metadata']/*[local-name()='version']")
+            $license = $metadata.SelectSingleNode("//*[local-name()='metadata']/*[local-name()='license']")
+            $repository = $metadata.SelectSingleNode("//*[local-name()='metadata']/*[local-name()='repository']")
+            if ($id.InnerText -ne 'RZeroF1.Minecraft.Projection') { throw 'Unexpected NuGet package ID.' }
+            if ($version.InnerText -ne '0.1.0') { throw "Unexpected NuGet package version: $($version.InnerText)" }
+            if ($license.InnerText -ne 'MPL-2.0') { throw 'Unexpected NuGet license expression.' }
+            if (-not $repository -or $repository.GetAttribute('commit') -ne $env:GITHUB_SHA) {
+              throw 'NuGet SourceLink commit does not match the checked-out Git commit.'
+            }
+            Write-Host "Validated $($packages[0].Name), SourceLink and native/license assets."
+          }
+          finally { $zip.Dispose() }
+
+      - name: Restore consumer from locally built NuGet package
+        shell: pwsh
+        run: dotnet restore tests/PackageConsumer/PackageConsumer.csproj -r win-x64 --configfile tests/PackageConsumer/NuGet.Config -p:NuGetAudit=false
+
+      - name: Run independent package consumer
+        shell: pwsh
+        run: dotnet run --project tests/PackageConsumer/PackageConsumer.csproj -c Release -r win-x64 --no-restore
+
+      - name: Archive validated packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: projection-nuget-win-x64
+          path: |
+            artifacts/packages/*.nupkg
+            artifacts/packages/*.snupkg
+          if-no-files-found: error
+          retention-days: 14
