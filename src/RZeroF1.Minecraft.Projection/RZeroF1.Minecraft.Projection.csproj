@@ -6,15 +6,15 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsPackable>true</IsPackable>
     <PackageId>RZeroF1.Minecraft.Projection</PackageId>
-    <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0</PackageVersion>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.1</PackageVersion>
     <Version Condition="'$(Version)' == ''">$(PackageVersion)</Version>
     <Authors>RZeroF1</Authors>
-    <Description>Windows x64 SDK for parsing Minecraft projections, loading game resources, building 3D meshes, slicing scenes and rendering through Direct3D 11.</Description>
+    <Description>Windows x64 Minecraft 投影 SDK，提供投影解析、游戏资源加载、模型与网格构建、切片、相机、D3D11 渲染、PNG 截图及资源诊断。</Description>
     <PackageTags>minecraft;projection;litematic;schem;d3d11;rendering;sdk</PackageTags>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
-    <PackageReleaseNotes>首个正式版本：提供 Litematica 与 Sponge 投影读取、Minecraft 资源加载、模型与网格构建、切片、相机、D3D11 渲染、PNG 截图和诊断 API。</PackageReleaseNotes>
+    <PackageReleaseNotes>新增 VirtualSurfaceImageSource GPU 输出，支持 XAML 亚克力叠加；保留 SwapChainPanel 接入，统一截图来源，补充显存估算并修正尺寸状态更新；统一中文文档并提供英文 README。</PackageReleaseNotes>
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>https://github.com/RZeroF1/WinUI-Minecraft-Projection</RepositoryUrl>
     <PackageProjectUrl>https://github.com/RZeroF1/WinUI-Minecraft-Projection</PackageProjectUrl>
@@ -32,9 +32,11 @@
 
   <ItemGroup>
     <None Include="$(RepositoryRoot)README.md" Pack="true" PackagePath="" />
+    <None Include="$(RepositoryRoot)README.en.md" Pack="true" PackagePath="" />
     <None Include="$(RepositoryRoot)LICENSE" Pack="true" PackagePath="" />
     <None Include="$(RepositoryRoot)THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="" />
     <None Include="$(RepositoryRoot)docs\**\*" Pack="true" PackagePath="docs" />
+    <None Include="$(RepositoryRoot)native\projection\README.md" Pack="true" PackagePath="native\projection" />
     <None Include="$(RepositoryRoot)licenses\**\*" Pack="true" PackagePath="licenses" />
     <None Include="$(TargetDir)rzero_projection_d3d11.dll"
           Pack="true"

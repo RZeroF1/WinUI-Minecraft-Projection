@@ -6,6 +6,6 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="RZeroF1.Minecraft.Projection" Version="0.1.0" />
+    <PackageReference Include="RZeroF1.Minecraft.Projection" Version="0.1.1" />
   </ItemGroup>
 </Project>

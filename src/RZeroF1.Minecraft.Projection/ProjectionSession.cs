@@ -77,6 +77,18 @@ public sealed class ProjectionSession : IDisposable
 
     public void ResizeRenderer(uint width, uint height) => _renderer.Resize(width, height);
 
+    /// <summary>
+    /// 通过 COM 标识连接不透明的 WinUI VirtualSurfaceImageSource。
+    /// 在 XAML UI 线程调用，图像源需保留至 DetachRenderer。
+    /// ResizeRenderer 同时调整图像源和 GPU 目标尺寸；RenderFrame
+    /// 绘制时刷新完整表面，供 XAML 亚克力采样 3D 画面。
+    /// </summary>
+    public void AttachSurfaceRenderer(nint surfaceImageSource, uint width, uint height)
+    {
+        ThrowIfDisposed();
+        _renderer.Attach(surfaceImageSource, width, height);
+    }
+
     public void DetachRenderer() => _renderer.Detach();
 
     public async Task<byte[]> CapturePngAsync(CancellationToken cancellationToken = default) =>

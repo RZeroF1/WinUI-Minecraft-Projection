@@ -104,9 +104,9 @@ internal sealed class ProjectionNativeRenderer : IDisposable
         height = Math.Max(1, height);
         if (width == _width && height == _height)
             return;
+        Check(Native.Resize(_renderer, width, height));
         _width = width;
         _height = height;
-        Check(Native.Resize(_renderer, _width, _height));
     }
 
     internal void Detach()

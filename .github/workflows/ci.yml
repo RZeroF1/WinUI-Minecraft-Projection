@@ -81,6 +81,12 @@ jobs:
           try {
             $entries = @($zip.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
             $required = @(
+              'README.md',
+              'README.en.md',
+              'docs/api.md',
+              'docs/architecture.md',
+              'docs/nuget.md',
+              'native/projection/README.md',
               'lib/net10.0/RZeroF1.Minecraft.Projection.dll',
               'runtimes/win-x64/native/rzero_projection_d3d11.dll',
               'LICENSE',
@@ -105,7 +111,9 @@ jobs:
             $license = $metadata.SelectSingleNode("//*[local-name()='metadata']/*[local-name()='license']")
             $repository = $metadata.SelectSingleNode("//*[local-name()='metadata']/*[local-name()='repository']")
             if ($id.InnerText -ne 'RZeroF1.Minecraft.Projection') { throw 'Unexpected NuGet package ID.' }
-            if ($version.InnerText -ne '0.1.0') { throw "Unexpected NuGet package version: $($version.InnerText)" }
+            [xml] $project = Get-Content -LiteralPath src/RZeroF1.Minecraft.Projection/RZeroF1.Minecraft.Projection.csproj -Raw
+            $expectedVersion = $project.SelectSingleNode('/Project/PropertyGroup/PackageVersion').InnerText
+            if ($version.InnerText -ne $expectedVersion) { throw "Unexpected NuGet package version: $($version.InnerText); expected $expectedVersion" }
             if ($license.InnerText -ne 'MPL-2.0') { throw 'Unexpected NuGet license expression.' }
             if (-not $repository -or $repository.GetAttribute('commit') -ne $env:GITHUB_SHA) {
               throw 'NuGet SourceLink commit does not match the checked-out Git commit.'

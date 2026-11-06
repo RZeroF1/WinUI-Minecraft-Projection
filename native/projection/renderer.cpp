@@ -48,9 +48,11 @@ struct DecodedTexture
 struct Renderer
 {
     ComPtr<ISwapChainPanelNative> panel;
+    ComPtr<IVirtualSurfaceImageSourceNative> surface;
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
     ComPtr<IDXGISwapChain1> swap;
+    ComPtr<ID3D11Texture2D> colorBuffer;
     ComPtr<ID3D11RenderTargetView> target;
     ComPtr<ID3D11DepthStencilView> depth;
     ComPtr<ID3D11VertexShader> vertexShader;
@@ -77,6 +79,8 @@ struct Renderer
     {
         if (panel)
             panel->SetSwapChain(nullptr);
+        if (surface)
+            surface->SetDevice(nullptr);
         if (context)
         {
             context->ClearState();
@@ -86,24 +90,43 @@ struct Renderer
 
     HRESULT Targets(UINT newWidth, UINT newHeight)
     {
-        if (newWidth == 0 || newHeight == 0)
+        if (newWidth == 0 || newHeight == 0 ||
+            newWidth > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+            newHeight > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION)
             return E_INVALIDARG;
         context->OMSetRenderTargets(0, nullptr, nullptr);
         target.Reset();
         depth.Reset();
+        colorBuffer.Reset();
         width = newWidth;
         height = newHeight;
 
-        HRESULT hr = swap->ResizeBuffers(
-            2, width, height, DXGI_FORMAT_B8G8R8A8_UNORM, 0);
+        HRESULT hr;
+        if (surface)
+        {
+            hr = surface->Resize((INT)width, (INT)height);
+            if (FAILED(hr))
+                return hr;
+            D3D11_TEXTURE2D_DESC colorDesc{};
+            colorDesc.Width = width;
+            colorDesc.Height = height;
+            colorDesc.MipLevels = 1;
+            colorDesc.ArraySize = 1;
+            colorDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            colorDesc.SampleDesc.Count = 1;
+            colorDesc.BindFlags = D3D11_BIND_RENDER_TARGET;
+            hr = device->CreateTexture2D(&colorDesc, nullptr, &colorBuffer);
+        }
+        else
+        {
+            hr = swap->ResizeBuffers(2, width, height, DXGI_FORMAT_B8G8R8A8_UNORM, 0);
+            if (FAILED(hr))
+                return hr;
+            hr = swap->GetBuffer(0, IID_PPV_ARGS(&colorBuffer));
+        }
         if (FAILED(hr))
             return hr;
-
-        ComPtr<ID3D11Texture2D> back;
-        hr = swap->GetBuffer(0, IID_PPV_ARGS(&back));
-        if (FAILED(hr))
-            return hr;
-        hr = device->CreateRenderTargetView(back.Get(), nullptr, &target);
+        hr = device->CreateRenderTargetView(colorBuffer.Get(), nullptr, &target);
         if (FAILED(hr))
             return hr;
 
@@ -126,7 +149,9 @@ struct Renderer
     {
         if (unknown == nullptr)
             return E_INVALIDARG;
-        HRESULT hr = unknown->QueryInterface(IID_PPV_ARGS(&panel));
+        HRESULT hr = unknown->QueryInterface(IID_PPV_ARGS(&surface));
+        if (FAILED(hr))
+            hr = unknown->QueryInterface(IID_PPV_ARGS(&panel));
         if (FAILED(hr))
             return hr;
 
@@ -146,28 +171,36 @@ struct Renderer
             return hr;
 
         ComPtr<IDXGIDevice> dxgiDevice;
-        ComPtr<IDXGIAdapter> adapter;
-        ComPtr<IDXGIFactory2> factory;
-        device.As(&dxgiDevice);
-        hr = dxgiDevice->GetAdapter(&adapter);
+        hr = device.As(&dxgiDevice);
         if (FAILED(hr))
             return hr;
-        hr = adapter->GetParent(IID_PPV_ARGS(&factory));
-        if (FAILED(hr))
-            return hr;
-
-        DXGI_SWAP_CHAIN_DESC1 swapDesc{};
-        swapDesc.Width = initialWidth;
-        swapDesc.Height = initialHeight;
-        swapDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        swapDesc.SampleDesc.Count = 1;
-        swapDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-        swapDesc.BufferCount = 2;
-        swapDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
-        swapDesc.Scaling = DXGI_SCALING_STRETCH;
-        swapDesc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
-        hr = factory->CreateSwapChainForComposition(
-            device.Get(), &swapDesc, nullptr, &swap);
+        if (surface)
+        {
+            hr = surface->SetDevice(dxgiDevice.Get());
+        }
+        else
+        {
+            ComPtr<IDXGIAdapter> adapter;
+            ComPtr<IDXGIFactory2> factory;
+            hr = dxgiDevice->GetAdapter(&adapter);
+            if (FAILED(hr))
+                return hr;
+            hr = adapter->GetParent(IID_PPV_ARGS(&factory));
+            if (FAILED(hr))
+                return hr;
+            DXGI_SWAP_CHAIN_DESC1 swapDesc{};
+            swapDesc.Width = initialWidth;
+            swapDesc.Height = initialHeight;
+            swapDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            swapDesc.SampleDesc.Count = 1;
+            swapDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+            swapDesc.BufferCount = 2;
+            swapDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+            swapDesc.Scaling = DXGI_SCALING_STRETCH;
+            swapDesc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+            hr = factory->CreateSwapChainForComposition(
+                device.Get(), &swapDesc, nullptr, &swap);
+        }
         if (FAILED(hr))
             return hr;
         hr = Targets(initialWidth, initialHeight);
@@ -310,7 +343,38 @@ float4 PS(Out input) : SV_TARGET {
         if (FAILED(hr))
             return hr;
 
-        return panel->SetSwapChain(swap.Get());
+        return panel ? panel->SetSwapChain(swap.Get()) : S_OK;
+    }
+
+    HRESULT PresentSurface()
+    {
+        // WinUI can sample this XAML surface for Acrylic; SwapChainPanel is
+        // composed separately. Keep frame transfer on the GPU, without readback.
+        ComPtr<IDXGISurface> drawingSurface;
+        POINT offset{};
+        RECT update{ 0, 0, (LONG)width, (LONG)height };
+        HRESULT hr = surface->BeginDraw(update, &drawingSurface, &offset);
+        if (FAILED(hr))
+            return hr;
+        {
+            ComPtr<IDXGISurface2> drawingSurface2;
+            ComPtr<ID3D11Texture2D> destination;
+            UINT subresource = 0;
+            hr = drawingSurface.As(&drawingSurface2);
+            if (SUCCEEDED(hr))
+                hr = drawingSurface2->GetResource(IID_PPV_ARGS(&destination), &subresource);
+            if (SUCCEEDED(hr))
+            {
+                context->OMSetRenderTargets(0, nullptr, nullptr);
+                D3D11_BOX source{ 0, 0, 0, width, height, 1 };
+                context->CopySubresourceRegion(destination.Get(), subresource,
+                    offset.x, offset.y, 0, colorBuffer.Get(), 0, &source);
+            }
+        }
+        drawingSurface.Reset();
+        // Every successful BeginDraw is paired, including a failed surface query.
+        HRESULT endResult = surface->EndDraw();
+        return FAILED(hr) ? hr : endResult;
     }
 
     HRESULT Draw(bool present)
@@ -394,7 +458,9 @@ float4 PS(Out input) : SV_TARGET {
             context->PSSetShaderResources(0, 1, &texture);
             context->DrawIndexed(mesh->indexCount, 0, 0);
         }
-        return present ? swap->Present(1, 0) : S_OK;
+        if (!present)
+            return S_OK;
+        return surface ? PresentSurface() : swap->Present(1, 0);
     }
 };
 
@@ -676,7 +742,8 @@ API unsigned long long __cdecl renderer_memory(Renderer* renderer)
 {
     if (renderer == nullptr)
         return 0;
-    auto bytes = renderer->meshBytes;
+    // Color + depth + presentation buffers; excludes compositor-managed caches.
+    auto bytes = renderer->meshBytes + (unsigned long long)renderer->width * renderer->height * 12;
     std::unordered_set<ID3D11ShaderResourceView*> textures;
     auto addTextures = [&](const std::vector<Mesh>& meshes)
     {
@@ -699,11 +766,8 @@ API int __cdecl renderer_pixels(
     if (FAILED(hr))
         return hr;
 
-    ComPtr<ID3D11Texture2D> back;
+    auto back = renderer->colorBuffer;
     ComPtr<ID3D11Texture2D> staging;
-    hr = renderer->swap->GetBuffer(0, IID_PPV_ARGS(&back));
-    if (FAILED(hr))
-        return hr;
     D3D11_TEXTURE2D_DESC description;
     back->GetDesc(&description);
     description.Usage = D3D11_USAGE_STAGING;
