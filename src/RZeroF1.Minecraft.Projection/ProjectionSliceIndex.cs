@@ -10,16 +10,10 @@ internal sealed class ProjectionSliceIndex
     private readonly AxisIndex[] _axes;
     private readonly int[] _totalStateCounts;
     private readonly IReadOnlyDictionary<ProjectionPosition, ProjectionBlock> _blockMap;
-    private readonly IReadOnlySet<ProjectionPosition> _opaqueFullCubes;
-
     public ProjectionSliceIndex(ProjectionDocument document)
     {
         _document = document;
         _blockMap = document.Blocks.ToDictionary(static block => block.Position);
-        _opaqueFullCubes = document.Blocks
-            .Where(block => ProjectionModelBaker.IsOpaqueFullCube(document.Palette[block.StateIndex].Name))
-            .Select(static block => block.Position)
-            .ToHashSet();
         _totalStateCounts = new int[document.Palette.Count];
         foreach (var block in document.Blocks)
             _totalStateCounts[block.StateIndex]++;
@@ -105,9 +99,6 @@ internal sealed class ProjectionSliceIndex
         _blockMap.ContainsKey(position);
 
     public IReadOnlyDictionary<ProjectionPosition, ProjectionBlock> BlockMap => _blockMap;
-
-    public bool IsOpaqueFullCube(ProjectionPosition position) =>
-        _opaqueFullCubes.Contains(position);
 
     private int[] GetStateCounts(int axis, int minimum, int maximum)
     {

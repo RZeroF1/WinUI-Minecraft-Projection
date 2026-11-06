@@ -194,7 +194,10 @@ internal sealed class ProjectionNativeRenderer : IDisposable
 
         public static DecodedTexture DecodeTexture(nint renderer, byte[]? png)
         {
-            var result = CreateTexture(renderer, png, (uint)(png?.Length ?? 0), out var texture, out var hasTransparency);
+            png ??= ProjectionTextureLoader.MissingPng;
+            var result = CreateTexture(renderer, png, (uint)png.Length, out var texture, out var hasTransparency);
+            if (result == unchecked((int)0x80070057) || (result & unchecked((int)0xffffff00)) == unchecked((int)0x88982f00))
+                result = CreateTexture(renderer, ProjectionTextureLoader.MissingPng, (uint)ProjectionTextureLoader.MissingPng.Length, out texture, out hasTransparency);
             Check(result);
             return new DecodedTexture(texture, hasTransparency != 0);
         }

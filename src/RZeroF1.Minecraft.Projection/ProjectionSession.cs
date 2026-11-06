@@ -36,6 +36,18 @@ public enum ProjectionMovementInput
 
 public sealed class ProjectionSession : IDisposable
 {
+    private readonly ProjectionRenderOptions _renderOptions = new();
+
+    public ProjectionSession()
+    {
+    }
+
+    public ProjectionSession(ProjectionRenderOptions renderOptions)
+    {
+        ArgumentNullException.ThrowIfNull(renderOptions);
+        _renderOptions = renderOptions;
+    }
+
     private const long MaxSliceCacheBytes = 128L * 1024 * 1024;
     private readonly Dictionary<SliceBoundaryKey, ProjectionBakedScene> _sliceCache = [];
     private readonly SemaphoreSlim _clientDiscoveryGate = new(1, 1);
@@ -63,6 +75,7 @@ public sealed class ProjectionSession : IDisposable
     internal IReadOnlyList<ProjectionMaterialGroup> SliceMaterialGroups { get; private set; } = [];
     public IReadOnlyDictionary<string, byte[]> MaterialIcons { get; private set; } =
         new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+    public IReadOnlyList<ProjectionRenderDiagnostic> RenderDiagnostics => Scene?.Diagnostics ?? [];
     public IReadOnlyList<string> Warnings =>
         (Document?.Warnings ?? []).Concat(Scene?.Warnings ?? []).Concat(_resources?.Warnings ?? [])
             .Distinct(StringComparer.Ordinal).Take(500).ToArray();
@@ -122,7 +135,7 @@ public sealed class ProjectionSession : IDisposable
                 resources.AddResourcePack(resourcePackPath);
             var index = await Task.Run(() => new ProjectionSliceIndex(document), cancellationToken);
             var scene = await Task.Run(
-                () => new ProjectionModelBaker(resources).Build(document, progress, cancellationToken),
+                () => new ProjectionModelBaker(resources, _renderOptions).Build(document, progress, cancellationToken),
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (_renderer.IsCreated)
@@ -174,7 +187,7 @@ public sealed class ProjectionSession : IDisposable
         {
             replacement.AddResourcePack(path);
             var scene = await Task.Run(
-                () => new ProjectionModelBaker(replacement).Build(document, progress, cancellationToken),
+                () => new ProjectionModelBaker(replacement, _renderOptions).Build(document, progress, cancellationToken),
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             var index = await Task.Run(() => new ProjectionSliceIndex(document), cancellationToken);
@@ -284,7 +297,7 @@ public sealed class ProjectionSession : IDisposable
             var index = SliceIndex!;
             var resources = _resources;
             boundary = await Task.Run(
-                () => new ProjectionModelBaker(resources).BuildSliceBoundary(
+                () => new ProjectionModelBaker(resources, _renderOptions).BuildSliceBoundary(
                     document, index, axis, minimum, maximum, cancellationToken),
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();

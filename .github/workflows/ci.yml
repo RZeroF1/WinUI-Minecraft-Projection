@@ -66,6 +66,10 @@ jobs:
         shell: pwsh
         run: dotnet run --project tests/RZeroF1.Minecraft.Projection.Tests/RZeroF1.Minecraft.Projection.Tests.csproj -c Release -r win-x64
 
+      - name: Enforce closed public package payload (including symbols)
+        shell: pwsh
+        run: ./.github/scripts/Validate-Packages.ps1
+
       - name: Inspect NuGet package and metadata
         shell: pwsh
         run: |

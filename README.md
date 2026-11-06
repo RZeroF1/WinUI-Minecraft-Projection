@@ -4,6 +4,10 @@
 
 独立的 .NET Minecraft 投影 SDK，提供投影读取、游戏资源加载、模型与网格构建、切片、相机、Direct3D 11 渲染、PNG 截图及资源诊断。宿主通过公开 API 接入，自行提供文件选择、客户端发现和输入事件。
 
+渲染失败的可见方块使用黑紫占位，`ProjectionSession.RenderDiagnostics` 提供原因、状态和坐标样本；空气与原版有意不可见方块保持不可见。支持元数据驱动的动画静态首帧、世界方向 Cullface、交叉植物和基础邻接流体。复杂方块实体、完整流体动画、含水几何及高级光照仍有限制，详见 [API 文档](docs/api.md)。NuGet 只收录公开内容白名单，CI 同时检查普通包和符号包。
+
+孤立玻璃板在测试场景中可能只显示为悬浮端帽，默认隐藏。需要保留其原始几何时，使用 `new ProjectionSession(new ProjectionRenderOptions { HideIsolatedGlassPanes = false })`；连接中的玻璃板不受影响，材料统计不因过滤改变。
+
 支持 Litematica `.litematic` 与 Sponge `.schem`。托管程序集面向 `net10.0`，不依赖托管 UI 框架；原生渲染器目前仅支持 Windows x64。
 
 ## 安装与接入

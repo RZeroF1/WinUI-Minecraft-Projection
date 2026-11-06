@@ -26,12 +26,12 @@ try
                 To = [16, 16, 16],
                 Faces = new Dictionary<string, ProjectionFaceDefinition>
                 {
-                    ["north"] = new() { Texture = "#all" },
-                    ["south"] = new() { Texture = "#all" },
-                    ["east"] = new() { Texture = "#all" },
-                    ["west"] = new() { Texture = "#all" },
-                    ["up"] = new() { Texture = "#all" },
-                    ["down"] = new() { Texture = "#all" }
+                    ["north"] = new() { Texture = "#all", CullFace = "north" },
+                    ["south"] = new() { Texture = "#all", CullFace = "south" },
+                    ["east"] = new() { Texture = "#all", CullFace = "east" },
+                    ["west"] = new() { Texture = "#all", CullFace = "west" },
+                    ["up"] = new() { Texture = "#all", CullFace = "up" },
+                    ["down"] = new() { Texture = "#all", CullFace = "down" }
                 }
             }
         ],
@@ -154,6 +154,7 @@ try
     Assert(
         DecodeSingleRowPng(rawPng) is [0, 255, 0, 0, 255, 0, 255, 0, 255],
         "PNG dimensions, zlib scanline, and BGRA-to-RGBA channel order");
+    RenderingRegression.Run(root);
     Console.WriteLine("PASS litematic/schem read, resource-pack texture/localization, materials, slices, camera, PNG encoding and disposal");
 }
 finally

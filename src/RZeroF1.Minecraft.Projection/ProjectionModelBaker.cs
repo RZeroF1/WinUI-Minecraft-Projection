@@ -33,6 +33,7 @@ internal sealed class ProjectionBakedScene
     public required ProjectionPosition Min { get; init; }
     public required ProjectionPosition Max { get; init; }
     public int BlockCount { get; init; }
+    public IReadOnlyList<ProjectionRenderDiagnostic> Diagnostics { get; init; } = [];
     public int MaterialCount => TexturePng.Count;
     public int TriangleCount => Batches.Sum(static batch => batch.Indices.Length / 3);
     public long EstimatedCpuBytes =>
@@ -42,20 +43,26 @@ internal sealed class ProjectionBakedScene
         TexturePng.Values.Sum(static texture => texture?.LongLength ?? 0);
 }
 
-internal sealed class ProjectionModelBaker
+internal sealed partial class ProjectionModelBaker
 {
     private readonly ProjectionResourceSet _resources;
+    private readonly ProjectionRenderOptions _renderOptions;
     private ProjectionModelResolver _resolver = null!;
     private readonly Dictionary<string, JsonElement> _blockstates = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<(string Texture, int Mode, int X, int Y, int Z), BatchBuilder> _batches = new();
+    private readonly Dictionary<(string Texture, int Mode, int X, int Y, int Z, int Face), BatchBuilder> _batches = new();
     private readonly Dictionary<string, byte[]?> _textures = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _materialTextureIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _warnings = [];
     private readonly HashSet<ProjectionPosition> _opaqueFullCubes = [];
+    private readonly Dictionary<ProjectionPosition, (ProjectionModelPlacement Placement, ProjectionModelInstance Model)[]> _resolved = [];
+    private readonly Dictionary<(string State, string Code, string? Model, string? Texture, string? Region), DiagnosticBuilder> _diagnostics = [];
+    private int _blendFace;
+    private readonly Dictionary<string, string> _blockstateFailures = new(StringComparer.OrdinalIgnoreCase);
 
-    public ProjectionModelBaker(ProjectionResourceSet resources)
+    public ProjectionModelBaker(ProjectionResourceSet resources, ProjectionRenderOptions? renderOptions = null)
     {
         _resources = resources;
+        _renderOptions = renderOptions ?? new ProjectionRenderOptions();
     }
 
     public ProjectionBakedScene Build(
@@ -66,6 +73,7 @@ internal sealed class ProjectionModelBaker
         _resources.LoadModelDefinitions(cancellationToken);
         _resolver = new ProjectionModelResolver(_resources.Models);
         _blockstates.Clear();
+        _blockstateFailures.Clear();
         _batches.Clear();
         _textures.Clear();
         _materialTextureIds.Clear();
@@ -77,12 +85,7 @@ internal sealed class ProjectionModelBaker
             (document.Min.Y + document.Max.Y + 1) / 2f,
             (document.Min.Z + document.Max.Z + 1) / 2f);
         var blockMap = document.Blocks.ToDictionary(static block => block.Position);
-        foreach (var block in document.Blocks)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (IsOpaqueFullCube(document.Palette[block.StateIndex].Name))
-                _opaqueFullCubes.Add(block.Position);
-        }
+        PrepareBlocks(document, cancellationToken);
 
         for (var index = 0; index < document.Blocks.Count; index++)
         {
@@ -109,6 +112,7 @@ internal sealed class ProjectionModelBaker
             Warnings = _warnings.Concat(_resources.Warnings).Distinct(StringComparer.Ordinal).Take(500).ToArray(),
             Min = document.Min,
             Max = document.Max,
+            Diagnostics = _diagnostics.Values.Select(item => item.ToResult(document.SourcePath, _resources.ClientJarPath)).ToArray(),
             BlockCount = document.Blocks.Count
         };
     }
@@ -127,6 +131,7 @@ internal sealed class ProjectionModelBaker
         _resources.LoadModelDefinitions(cancellationToken);
         _resolver = new ProjectionModelResolver(_resources.Models);
         _blockstates.Clear();
+        _blockstateFailures.Clear();
         _batches.Clear();
         _textures.Clear();
         _materialTextureIds.Clear();
@@ -136,6 +141,7 @@ internal sealed class ProjectionModelBaker
             (document.Min.Y + document.Max.Y + 1) / 2f,
             (document.Min.Z + document.Max.Z + 1) / 2f);
         var blockMap = index.BlockMap;
+        PrepareBlocks(document, cancellationToken);
 
         var lowerDirection = BoundaryDirection(axis, lower: true);
         var upperDirection = BoundaryDirection(axis, lower: false);
@@ -148,18 +154,7 @@ internal sealed class ProjectionModelBaker
             minimum,
             lowerDirection,
             cancellationToken);
-        if (maximum != minimum)
-        {
-            AddBoundary(
-                document,
-                index,
-                blockMap,
-                center,
-                axis,
-                maximum,
-                upperDirection,
-                cancellationToken);
-        }
+        AddBoundary(document, index, blockMap, center, axis, maximum, upperDirection, cancellationToken);
 
         return new ProjectionBakedScene
         {
@@ -172,6 +167,7 @@ internal sealed class ProjectionModelBaker
             Warnings = _warnings.Concat(_resources.Warnings).Distinct(StringComparer.Ordinal).Take(500).ToArray(),
             Min = document.Min,
             Max = document.Max,
+            Diagnostics = _diagnostics.Values.Select(item => item.ToResult(document.SourcePath, _resources.ClientJarPath)).ToArray(),
             BlockCount = 0
         };
     }
@@ -190,8 +186,10 @@ internal sealed class ProjectionModelBaker
         {
             cancellationToken.ThrowIfCancellationRequested();
             var neighbor = Neighbor(block.Position, direction);
-            if (!index.IsOpaqueFullCube(neighbor) || !blockMap.ContainsKey(neighbor))
-                continue;
+            if (!blockMap.TryGetValue(neighbor, out var next)) continue;
+            var state = document.Palette[block.StateIndex];
+            if (!_opaqueFullCubes.Contains(neighbor) &&
+                !(state.Name is "minecraft:water" or "minecraft:lava" && document.Palette[next.StateIndex].Name == state.Name)) continue;
 
             AddBlock(
                 document,
@@ -211,76 +209,39 @@ internal sealed class ProjectionModelBaker
         IReadOnlyDictionary<ProjectionPosition, ProjectionBlock> blockMap,
         ProjectionFaceDirection? onlyDirection = null)
     {
-        var selected = new List<ProjectionModelPlacement>();
-        var stateJson = ReadBlockstate(state.Name);
-        if (stateJson is { } json)
-        {
-            try
-            {
-                selected.AddRange(ProjectionStateSelection.Select(
-                    json,
-                    state.Properties,
-                    StableSeed(block.Position)));
-            }
-            catch (Exception exception)
-            {
-                AddWarning($"{state.Key}: blockstate 选择失败：{exception.Message}");
-            }
-        }
-
+        if (IsInvisible(state) || IsPreviewFiltered(state)) return;
         var blockName = state.Name;
         if (blockName is "minecraft:water" or "minecraft:lava")
         {
-            AddFluid(block, state, center, blockName);
+            AddFluid(document, block, state, center, blockMap, onlyDirection);
             return;
         }
-
-        if (selected.Count == 0)
+        foreach (var (placement, model) in _resolved[block.Position])
         {
-            AddWarning($"{state.Key}: 缺少可用 blockstate，使用占位模型。");
-            selected.Add(new ProjectionModelPlacement("__missing__", 0, 0, false));
-        }
-
-        foreach (var placement in selected)
-        {
-            ProjectionModelInstance model;
-            try
-            {
-                model = placement.Model == "__missing__"
-                    ? MissingModel()
-                    : _resolver.Resolve(placement.Model);
-            }
-            catch (Exception exception)
-            {
-                AddWarning($"{state.Key}: {exception.Message}，使用占位模型。");
-                model = MissingModel();
-            }
-
-            if (model.Elements.Count == 0)
-            {
-                AddWarning($"{state.Key}: 模型由原版专用 renderer 提供几何，当前引擎暂不支持该特殊渲染器。");
-                continue;
-            }
-
             var stateRotation =
-                Matrix4x4.CreateRotationX(placement.RotationX * MathF.PI / 180f) *
+                Matrix4x4.CreateRotationX(-placement.RotationX * MathF.PI / 180f) *
                 Matrix4x4.CreateRotationY(-placement.RotationY * MathF.PI / 180f);
-            var fullCube = IsFullCube(model);
             foreach (var element in model.Elements)
             {
                 var corners = CreateCorners(element.From / 16f, element.To / 16f);
                 TransformCorners(corners, element.Rotation, stateRotation);
                 foreach (var (direction, face) in element.Faces)
                 {
-                    if (onlyDirection is not null && direction != onlyDirection)
-                        continue;
-                    if (onlyDirection is null && fullCube && IsInternalFace(block.Position, direction, blockMap))
-                        continue;
+                    ProjectionFaceDirection? worldCull = ProjectionModelGeometry.TryParseFaceDirection(face.CullFace ?? "", out var cull)
+                        ? RotateDirection(cull, stateRotation) : null;
+                    if (onlyDirection is not null && worldCull != onlyDirection) continue;
+                    if (onlyDirection is null && worldCull is { } world && IsInternalFace(block.Position, world, blockMap)) continue;
 
                     var positions = ProjectionModelGeometry.FaceVertexIndices[direction]
                         .Select(index => corners[index] + new Vector3(block.Position.X, block.Position.Y, block.Position.Z) - center)
                         .ToArray();
-                    var normal = Vector3.Normalize(Vector3.Cross(positions[1] - positions[0], positions[2] - positions[0]));
+                    var cross = Vector3.Cross(positions[1] - positions[0], positions[2] - positions[0]);
+                    if (!float.IsFinite(cross.LengthSquared()) || cross.LengthSquared() < 1e-12f)
+                    {
+                        Diagnose(block, state, "DegenerateFace", model.Name);
+                        continue;
+                    }
+                    var normal = Vector3.Normalize(cross);
                     var textureId = ResolveTexture(model, face.Texture);
                     _materialTextureIds.TryAdd(state.Key, textureId);
                     var mode = RenderMode(state.Name, textureId);
@@ -288,7 +249,7 @@ internal sealed class ProjectionModelBaker
                         face.Uv ?? ProjectionModelGeometry.DefaultFaceUv(element.From, element.To, direction),
                         face.Rotation);
                     if (placement.UvLock)
-                        uv = LockUvToWorld(positions, uv, normal);
+                        uv = LockUvToWorld(uv, direction, stateRotation);
                     var tint = face.TintIndex is not null ? Tint(state.Name) : Vector3.One;
                     if (state.Name is "minecraft:water" or "minecraft:lava")
                         tint = Tint(state.Name);
@@ -308,34 +269,57 @@ internal sealed class ProjectionModelBaker
         }
     }
 
-    private void AddFluid(ProjectionBlock block, ProjectionState state, Vector3 center, string blockName)
+    private void AddFluid(ProjectionDocument document, ProjectionBlock block, ProjectionState state, Vector3 center,
+        IReadOnlyDictionary<ProjectionPosition, ProjectionBlock> blockMap, ProjectionFaceDirection? onlyDirection)
     {
-        var level = state.Properties.TryGetValue("level", out var rawLevel) &&
-                    int.TryParse(rawLevel, out var parsed)
-            ? parsed
-            : 0;
-        var height = level >= 8 ? 1f : Math.Clamp((8 - level) / 9f, .1f, 1f);
-        var model = CubeModel(blockName == "minecraft:water"
-            ? "minecraft:block/water_still"
-            : "minecraft:block/lava_still", height);
-        _materialTextureIds.TryAdd(state.Key, blockName == "minecraft:water"
-            ? "minecraft:block/water_still"
-            : "minecraft:block/lava_still");
-        var fake = block with { };
-        foreach (var element in model.Elements)
+        var kind = state.Name;
+        bool Same(ProjectionPosition p) => blockMap.TryGetValue(p, out var other) && document.Palette[other.StateIndex].Name == kind;
+        float Height(ProjectionPosition p)
         {
-            var corners = CreateCorners(element.From / 16f, element.To / 16f);
-            foreach (var (direction, face) in element.Faces)
+            if (!blockMap.TryGetValue(p, out var other)) return 0;
+            var otherState = document.Palette[other.StateIndex];
+            if (otherState.Name != kind) return 0;
+            if (Same(p with { Y = p.Y + 1 })) return 1;
+            var level = otherState.Properties.TryGetValue("level", out var text) && int.TryParse(text, out var n) ? n : 0;
+            return level >= 8 ? 8f / 9 : (8 - Math.Clamp(level, 0, 7)) / 9f;
+        }
+        float Corner(int dx, int dz)
+        {
+            float sum = 0, weight = 0;
+            for (var x = dx - 1; x <= dx; x++)
+            for (var z = dz - 1; z <= dz; z++)
             {
-                var positions = ProjectionModelGeometry.FaceVertexIndices[direction]
-                    .Select(index => corners[index] + new Vector3(fake.Position.X, fake.Position.Y, fake.Position.Z) - center)
-                    .ToArray();
-                var normal = Vector3.Normalize(Vector3.Cross(positions[1] - positions[0], positions[2] - positions[0]));
-                var uv = ProjectionModelGeometry.CreateUvMap(
-                    face.Uv ?? ProjectionModelGeometry.DefaultFaceUv(element.From, element.To, direction),
-                    face.Rotation);
-                AddFace(face.Texture, 2, fake.Position, positions, normal, uv, Tint(blockName));
+                var p = block.Position with { X = block.Position.X + x, Z = block.Position.Z + z };
+                if (Same(p with { Y = p.Y + 1 })) return 1;
+                if (Same(p))
+                {
+                    var height = Height(p);
+                    var w = height >= .8f ? 10 : 1;
+                    sum += height * w; weight += w;
+                }
+                else if (!blockMap.ContainsKey(p)) weight++;
             }
+            return weight > 0 ? sum / weight : Height(block.Position);
+        }
+        var corners = CreateCorners(Vector3.Zero, Vector3.One);
+        corners[3].Y = Corner(0, 0); corners[2].Y = Corner(1, 0);
+        corners[7].Y = Corner(0, 1); corners[6].Y = Corner(1, 1);
+        foreach (var direction in Enum.GetValues<ProjectionFaceDirection>())
+        {
+            var neighbor = Neighbor(block.Position, direction);
+            var suppressed = Same(neighbor) || _opaqueFullCubes.Contains(neighbor);
+            if (onlyDirection is not null ? direction != onlyDirection || !suppressed : suppressed) continue;
+            var positions = ProjectionModelGeometry.FaceVertexIndices[direction]
+                .Select(i => corners[i] + new Vector3(block.Position.X, block.Position.Y, block.Position.Z) - center).ToArray();
+            var cross = Vector3.Cross(positions[1] - positions[0], positions[2] - positions[0]);
+            if (cross.LengthSquared() < 1e-12f) continue;
+            var texture = kind + (direction is ProjectionFaceDirection.Up or ProjectionFaceDirection.Down ? "_still" : "_flow");
+            texture = texture.Replace("minecraft:", "minecraft:block/", StringComparison.Ordinal);
+            var image = _resources.LoadTexture(texture);
+            if (image.Failure is { } failure) Diagnose(block, state, failure, texture: texture);
+            _materialTextureIds.TryAdd(state.Key, texture);
+            AddFace(texture, kind == "minecraft:lava" ? 0 : 2, block.Position, positions, Vector3.Normalize(cross),
+                ProjectionModelGeometry.CreateUvMap(new Vector4(0, 0, 16, 16), 0), kind == "minecraft:water" ? Tint(kind) : Vector3.One);
         }
     }
 
@@ -349,11 +333,8 @@ internal sealed class ProjectionModelBaker
         Vector3 color)
     {
         EnsureTexture(textureId);
-        var chunk = (
-            FloorDiv(blockPosition.X, 16),
-            FloorDiv(blockPosition.Y, 16),
-            FloorDiv(blockPosition.Z, 16));
-        var key = (textureId, mode, chunk.Item1, chunk.Item2, chunk.Item3);
+        var chunk = (FloorDiv(blockPosition.X, 16), FloorDiv(blockPosition.Y, 16), FloorDiv(blockPosition.Z, 16));
+        var key = (textureId, mode, chunk.Item1, chunk.Item2, chunk.Item3, mode == 2 ? ++_blendFace : 0);
         if (!_batches.TryGetValue(key, out var batch))
         {
             batch = new BatchBuilder(textureId, mode, chunk.Item1, chunk.Item2, chunk.Item3);
@@ -378,11 +359,12 @@ internal sealed class ProjectionModelBaker
     private JsonElement? ReadBlockstate(string blockName)
     {
         if (_blockstates.TryGetValue(blockName, out var cached))
-            return cached;
+            return cached.ValueKind == JsonValueKind.Undefined ? null : cached;
         var bytes = _resources.Read(ProjectionResourceSet.ResourcePath(blockName, "blockstates", ".json"));
         if (bytes is null)
         {
             _blockstates[blockName] = default;
+            _blockstateFailures[blockName] = "MissingBlockstate";
             return null;
         }
 
@@ -395,6 +377,7 @@ internal sealed class ProjectionModelBaker
         }
         catch (JsonException exception)
         {
+            _blockstateFailures[blockName] = "InvalidBlockstate";
             AddWarning($"{blockName}: blockstate JSON 无法解析：{exception.Message}");
             _blockstates[blockName] = default;
             return null;
@@ -428,11 +411,7 @@ internal sealed class ProjectionModelBaker
     {
         if (_textures.ContainsKey(textureId))
             return;
-        _textures[textureId] = textureId == "__missing__"
-            ? null
-            : _resources.Read(ProjectionResourceSet.ResourcePath(textureId, "textures", ".png"));
-        if (_textures[textureId] is null && textureId != "__missing__")
-            AddWarning($"缺少纹理 {textureId}。");
+        _textures[textureId] = _resources.LoadTexture(textureId).Png;
     }
 
     private int RenderMode(string blockName, string textureId)
@@ -442,8 +421,7 @@ internal sealed class ProjectionModelBaker
         if (_resources.ForceTranslucent.Contains(textureId) ||
             blockName.Contains("glass", StringComparison.OrdinalIgnoreCase) ||
             blockName.Contains("ice", StringComparison.OrdinalIgnoreCase) ||
-            blockName.Contains("water", StringComparison.OrdinalIgnoreCase) ||
-            blockName.Contains("lava", StringComparison.OrdinalIgnoreCase))
+            blockName == "minecraft:water")
             return 2;
         if (blockName.Contains("leaves", StringComparison.OrdinalIgnoreCase) ||
             blockName.Contains("flower", StringComparison.OrdinalIgnoreCase) ||
@@ -579,29 +557,8 @@ internal sealed class ProjectionModelBaker
         model.Elements[0].To == new Vector3(16, 16, 16) &&
         model.Elements[0].Faces.Count == 6;
 
-    internal static bool IsOpaqueFullCube(string stateName)
-    {
-        var lower = stateName.ToLowerInvariant();
-        return !lower.Contains("air") &&
-               !lower.Contains("water") &&
-               !lower.Contains("lava") &&
-               !lower.Contains("glass") &&
-               !lower.Contains("leaves") &&
-               !lower.Contains("slab") &&
-               !lower.Contains("stairs") &&
-               !lower.Contains("fence") &&
-               !lower.Contains("wall") &&
-               !lower.Contains("door") &&
-               !lower.Contains("pane") &&
-               !lower.Contains("torch") &&
-               !lower.Contains("flower") &&
-               !lower.Contains("grass") &&
-               !lower.Contains("fern") &&
-               !lower.Contains("vine") &&
-               !lower.Contains("chain");
-    }
-
     private static Vector3 Tint(string stateName) =>
+        stateName.Contains("lily_pad", StringComparison.OrdinalIgnoreCase) ? new Vector3(.23f, .48f, .13f) :
         stateName.Contains("grass", StringComparison.OrdinalIgnoreCase)
             ? new Vector3(.57f, .74f, .35f)
             : stateName.Contains("fern", StringComparison.OrdinalIgnoreCase) ||
@@ -613,37 +570,34 @@ internal sealed class ProjectionModelBaker
                     : Vector3.One;
 
     private static Vector2[] LockUvToWorld(
-        IReadOnlyList<Vector3> positions,
         IReadOnlyList<Vector2> source,
-        Vector3 normal)
+        ProjectionFaceDirection direction,
+        Matrix4x4 stateRotation)
     {
-        var projected = positions
-            .Select(position =>
-                MathF.Abs(normal.Y) > .9f
-                    ? new Vector2(position.X, normal.Y > 0 ? position.Z : -position.Z)
-                    : MathF.Abs(normal.X) > .9f
-                        ? new Vector2(normal.X > 0 ? -position.Z : position.Z, -position.Y)
-                        : new Vector2(normal.Z > 0 ? position.X : -position.X, -position.Y))
-            .ToArray();
-        var minU = projected.Min(static point => point.X);
-        var maxU = projected.Max(static point => point.X);
-        var minV = projected.Min(static point => point.Y);
-        var maxV = projected.Max(static point => point.Y);
-        return projected
-            .Select(point =>
-            {
-                var right = MathF.Abs(point.X - maxU) < MathF.Abs(point.X - minU);
-                var top = MathF.Abs(point.Y - maxV) < MathF.Abs(point.Y - minV);
-                var sourceIndex = (right, top) switch
-                {
-                    (false, false) => 0,
-                    (false, true) => 1,
-                    (true, true) => 2,
-                    _ => 3
-                };
-                return source[sourceIndex];
-            })
-            .ToArray();
+        // Rotate the UV coordinates about the texture center, including the cropped rectangle.
+        // Permuting corners alone exchanges the edges of non-square faces without exchanging
+        // the UV extents, stretching stair treads. Element geometry/rotation must not affect uvlock.
+        static (Vector3 U, Vector3 V) Axes(ProjectionFaceDirection face) => face switch
+        {
+            ProjectionFaceDirection.Up => (Vector3.UnitX, Vector3.UnitZ),
+            ProjectionFaceDirection.Down => (Vector3.UnitX, -Vector3.UnitZ),
+            ProjectionFaceDirection.North => (-Vector3.UnitX, -Vector3.UnitY),
+            ProjectionFaceDirection.South => (Vector3.UnitX, -Vector3.UnitY),
+            ProjectionFaceDirection.West => (Vector3.UnitZ, -Vector3.UnitY),
+            _ => (-Vector3.UnitZ, -Vector3.UnitY)
+        };
+        var local = Axes(direction);
+        var world = Axes(RotateDirection(direction, stateRotation));
+        var rotatedU = Vector3.TransformNormal(local.U, stateRotation);
+        var rotatedV = Vector3.TransformNormal(local.V, stateRotation);
+        // Blockstate rotations are quarter turns; snap their floating-point residuals.
+        var u = new Vector2(MathF.Round(Vector3.Dot(rotatedU, world.U)), MathF.Round(Vector3.Dot(rotatedV, world.U)));
+        var v = new Vector2(MathF.Round(Vector3.Dot(rotatedU, world.V)), MathF.Round(Vector3.Dot(rotatedV, world.V)));
+        return source.Select(uv =>
+        {
+            var centered = uv - new Vector2(.5f);
+            return new Vector2(Vector2.Dot(centered, u), Vector2.Dot(centered, v)) + new Vector2(.5f);
+        }).ToArray();
     }
 
     private static float ShadeFactor(string? directionOverride, Vector3 normal)

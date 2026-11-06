@@ -10,16 +10,18 @@
 
 ## 包内容
 
-包中包含以下文件，打包清单以 SDK 的 `.csproj` 为准：
+包中只包含明确列出的公开文件，打包清单以 SDK 的 `.csproj` 为准，不递归收集文档或许可证目录：
 
 - `lib/net10.0/`：托管 SDK 程序集与 XML API 注释。
 - `runtimes/win-x64/native/rzero_projection_d3d11.dll`：原生 D3D11 渲染器。
 - `README.md` 与 `README.en.md`：中文和英文说明；NuGet 默认展示中文版本。
-- `docs/`：中文 API、架构与包说明。
+- `docs/api.md`、`docs/architecture.md`、`docs/nuget.md`：中文公开文档。
 - `native/projection/README.md`：原生渲染器构建与生命周期说明。
 - `LICENSE`、`THIRD-PARTY-NOTICES.md`、`licenses/`：项目许可证、第三方许可证、来源及固定修订信息。
 
 调试符号另行输出为 `.snupkg`。包不包含本地测试、宿主页面、临时诊断文件或构建缓存，不依赖托管 UI 框架运行时。
+
+`docs/internal/`、新增内部目录、调查截图、ZIP、投影样本和探针均不在白名单中，不依赖 Git 忽略规则。每次打包后执行 `.github/scripts/Validate-Packages.ps1`，同时检查 `.nupkg` 和 `.snupkg` 的完整条目集合，拒绝未知内容并核对 Native DLL、API XML、许可证和来源文件。新增公开文档需要同步更新打包清单和检查器，不能扩回目录通配。
 
 ## 构建与本地消费
 

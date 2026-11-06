@@ -61,6 +61,7 @@ struct Renderer
     ComPtr<ID3D11Buffer> constant;
     ComPtr<ID3D11RasterizerState> rasterizer;
     ComPtr<ID3D11SamplerState> sampler;
+    ComPtr<ID3D11SamplerState> filteredSampler;
     ComPtr<ID3D11BlendState> blend;
     ComPtr<ID3D11DepthStencilState> noDepthWrite;
     std::vector<Mesh> meshes;
@@ -214,6 +215,7 @@ cbuffer Camera : register(b0) {
 };
 Texture2D tex : register(t0);
 SamplerState pointSampler : register(s0);
+SamplerState filteredSampler : register(s1);
 struct In {
     float3 position : POSITION;
     float3 normal : NORMAL;
@@ -241,11 +243,13 @@ float4 PS(Out input) : SV_TARGET {
         clip(coordinate - params.z);
         clip(params.w - coordinate);
     }
-    float4 color = tex.Sample(pointSampler, input.uv) * input.color;
+    uint tw, th;
+    tex.GetDimensions(tw, th);
+    float footprint = max(length(ddx(input.uv) * float2(tw, th)), length(ddy(input.uv) * float2(tw, th)));
+    float4 color = (params.x > 0.5 && params.x < 1.5 || footprint <= 1 ? tex.SampleLevel(pointSampler, input.uv, 0) : tex.Sample(filteredSampler, input.uv)) * input.color;
     if (params.x > 0.5 && params.x < 1.5)
         clip(color.a - 0.1);
-    if (params.x > 1.5)
-        color.a *= 0.72;
+
     return color;
 }
 )";
@@ -305,7 +309,7 @@ float4 PS(Out input) : SV_TARGET {
 
         D3D11_RASTERIZER_DESC rasterDesc{};
         rasterDesc.FillMode = D3D11_FILL_SOLID;
-        rasterDesc.CullMode = D3D11_CULL_NONE;
+        rasterDesc.CullMode = D3D11_CULL_BACK;
         rasterDesc.DepthClipEnable = TRUE;
         hr = device->CreateRasterizerState(&rasterDesc, &rasterizer);
         if (FAILED(hr))
@@ -320,6 +324,11 @@ float4 PS(Out input) : SV_TARGET {
         hr = device->CreateSamplerState(&samplerDesc, &sampler);
         if (FAILED(hr))
             return hr;
+
+        samplerDesc.Filter = D3D11_FILTER_ANISOTROPIC;
+        samplerDesc.MaxAnisotropy = 8;
+        hr = device->CreateSamplerState(&samplerDesc, &filteredSampler);
+        if (FAILED(hr)) return hr;
 
         D3D11_BLEND_DESC blendDesc{};
         auto& targetBlend = blendDesc.RenderTarget[0];
@@ -413,6 +422,8 @@ float4 PS(Out input) : SV_TARGET {
         context->PSSetConstantBuffers(0, 1, &constantBuffer);
         ID3D11SamplerState* samplerState = sampler.Get();
         context->PSSetSamplers(0, 1, &samplerState);
+        ID3D11SamplerState* filteredState = filteredSampler.Get();
+        context->PSSetSamplers(1, 1, &filteredState);
 
         std::vector<Mesh*> ordered;
         ordered.reserve(meshes.size() + sliceMeshes.size());
@@ -580,7 +591,11 @@ API int __cdecl renderer_mesh(
         return hr;
 
     mesh.texture = decodedTexture->view;
-    mesh.textureBytes = static_cast<unsigned long long>(decodedTexture->width) * decodedTexture->height * 4;
+    for (UINT w = decodedTexture->width, h = decodedTexture->height;; w = std::max(1u, w / 2), h = std::max(1u, h / 2))
+    {
+        mesh.textureBytes += static_cast<unsigned long long>(w) * h * 4;
+        if (w == 1 && h == 1) break;
+    }
 
     mesh.bytes =
         static_cast<unsigned long long>(vertexDesc.ByteWidth) +
@@ -591,19 +606,14 @@ API int __cdecl renderer_mesh(
     return S_OK;
 }
 
-API int __cdecl renderer_texture_create(
-    Renderer* renderer,
-    const unsigned char* png,
-    unsigned pngSize,
-    DecodedTexture** result,
-    int* hasTransparency)
+struct ImageComScope {
+    HRESULT result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    ~ImageComScope() { if (SUCCEEDED(result)) CoUninitialize(); }
+};
+static HRESULT DecodeImage(const unsigned char* png, unsigned pngSize, UINT& width, UINT& height, std::vector<BYTE>& pixels)
 {
-    if (renderer == nullptr || result == nullptr || hasTransparency == nullptr ||
-        png == nullptr || pngSize == 0 || pngSize > 64 * 1024 * 1024)
-        return E_INVALIDARG;
-    *result = nullptr;
-    *hasTransparency = 0;
-
+    ImageComScope com;
+    if (!png || !pngSize || pngSize > 64 * 1024 * 1024) return E_INVALIDARG;
     ComPtr<IWICImagingFactory> factory;
     HRESULT hr = CoCreateInstance(
         CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
@@ -629,10 +639,8 @@ API int __cdecl renderer_texture_create(
     hr = decoder->GetFrame(0, &frame);
     if (FAILED(hr))
         return hr;
-    UINT width = 0;
-    UINT height = 0;
     hr = frame->GetSize(&width, &height);
-    if (FAILED(hr) || width == 0 || height == 0 || width > 16384 || height > 16384)
+    if (FAILED(hr) || width == 0 || height == 0 || width > 16384 || height > 16384 || (uint64_t)width * height > 16777216)
         return FAILED(hr) ? hr : E_INVALIDARG;
 
     WICPixelFormatGUID sourceFormat{};
@@ -659,11 +667,50 @@ API int __cdecl renderer_texture_create(
 
     const UINT stride = width * 4;
     const UINT bufferSize = stride * height;
-    std::vector<BYTE> pixels(bufferSize);
+    pixels.resize(bufferSize);
     hr = source->CopyPixels(nullptr, stride, bufferSize, pixels.data());
     if (FAILED(hr))
         return hr;
 
+    return S_OK;
+}
+API int __cdecl renderer_image_decode(const unsigned char* png, unsigned size, void** result, UINT* width, UINT* height)
+{
+    if (!result || !width || !height) return E_INVALIDARG;
+    *result = nullptr;
+    *width = *height = 0;
+    try {
+        std::vector<BYTE> rgba;
+        HRESULT hr = DecodeImage(png, size, *width, *height, rgba);
+        if (FAILED(hr)) return hr;
+        for (size_t i = 0; i < rgba.size(); i += 4) std::swap(rgba[i], rgba[i + 2]);
+        auto copy = CoTaskMemAlloc(rgba.size());
+        if (!copy) return E_OUTOFMEMORY;
+        memcpy(copy, rgba.data(), rgba.size());
+        *result = copy;
+        return S_OK;
+    } catch (const std::bad_alloc&) { return E_OUTOFMEMORY; }
+}
+API void __cdecl renderer_image_free(void* pixels) { CoTaskMemFree(pixels); }
+
+API int __cdecl renderer_texture_create(
+    Renderer* renderer,
+    const unsigned char* png,
+    unsigned pngSize,
+    DecodedTexture** result,
+    int* hasTransparency) try
+{
+    if (renderer == nullptr || result == nullptr || hasTransparency == nullptr ||
+        png == nullptr || pngSize == 0 || pngSize > 64 * 1024 * 1024)
+        return E_INVALIDARG;
+    *result = nullptr;
+    *hasTransparency = 0;
+
+    UINT width = 0, height = 0;
+    std::vector<BYTE> pixels;
+    HRESULT hr = DecodeImage(png, pngSize, width, height, pixels);
+    if (FAILED(hr)) return hr;
+    const UINT stride = width * 4;
     bool transparent = false;
     for (size_t index = 3; index < pixels.size(); index += 4)
     {
@@ -677,20 +724,19 @@ API int __cdecl renderer_texture_create(
     D3D11_TEXTURE2D_DESC textureDesc{};
     textureDesc.Width = width;
     textureDesc.Height = height;
-    textureDesc.MipLevels = 1;
+    textureDesc.MipLevels = 0;
+    textureDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
     textureDesc.ArraySize = 1;
     textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     textureDesc.SampleDesc.Count = 1;
-    textureDesc.Usage = D3D11_USAGE_IMMUTABLE;
-    textureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    D3D11_SUBRESOURCE_DATA textureData{};
-    textureData.pSysMem = pixels.data();
-    textureData.SysMemPitch = stride;
+    textureDesc.Usage = D3D11_USAGE_DEFAULT;
+    textureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
     ComPtr<ID3D11Texture2D> texture;
-    hr = renderer->device->CreateTexture2D(&textureDesc, &textureData, &texture);
+    hr = renderer->device->CreateTexture2D(&textureDesc, nullptr, &texture);
     if (FAILED(hr))
         return hr;
 
+    renderer->context->UpdateSubresource(texture.Get(), 0, nullptr, pixels.data(), stride, 0);
     auto decoded = new DecodedTexture();
     decoded->width = width;
     decoded->height = height;
@@ -702,10 +748,12 @@ API int __cdecl renderer_texture_create(
         delete decoded;
         return hr;
     }
+    renderer->context->GenerateMips(decoded->view.Get());
     *hasTransparency = transparent ? 1 : 0;
     *result = decoded;
     return S_OK;
 }
+catch (const std::bad_alloc&) { return E_OUTOFMEMORY; }
 
 API void __cdecl renderer_texture_destroy(DecodedTexture* texture)
 {

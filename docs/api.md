@@ -199,6 +199,29 @@ bool drawn = session.RenderFrame(input, speedScale: 1, rendererBusy: false);
 
 ## 截图与诊断
 
+默认隐藏测试模型中的孤立玻璃板端帽。需要显示其原始几何时，可在创建 session 时关闭预览过滤：
+
+```csharp
+using var session = new ProjectionSession(new ProjectionRenderOptions
+{
+    HideIsolatedGlassPanes = false
+});
+```
+
+该选项默认 `true`，仅隐藏原版普通/染色玻璃板中 north/east/south/west 四个连接属性全部显式为 `false` 的几何；也会隐藏用户有意摆放的此类玻璃板，不自动判断哪些是辅助支撑。设为 `false` 可恢复这些几何。连接中的玻璃板、缺少连接属性的状态、Mod namespace 均保留。投影文档、坐标、材料数量不变；主视图、切包和切片使用同一不可变策略。更换策略需新建 session，并按原生命周期释放旧 session。
+
+过滤项在 `RenderDiagnostics` 中记为 `PreviewFilteredIsolatedGlassPane`，包含次数和源坐标样本；它是展示过滤，不是解析错误或正常不可见分类。花排上方的玻璃端帽因此可以从预览中移除，不需要改动花朵模型、Alpha 或源文件。
+
+`RenderDiagnostics` 返回最近一次成功加载或切包的分组渲染诊断快照，未加载或 `Clear` 后为空。与其他 session 状态一样，由宿主在所属线程读取，不与加载、切包和释放并发访问；应先等待操作完成。已取得的快照不持有 Native 资源，可以在 session 释放后保留。
+
+`ProjectionRenderDiagnostic` 包含 `SourcePath`、`ClientJarPath`、`BlockId`、完整 `Blockstate`、`Region`、`Reason`、`Model`、`Texture`、`Count` 和最多 16 个原始源坐标 `Positions`。`Count` 不受 `Warnings` 的 500 条上限截断；退化面的 Count 为面事件数，其余为对应状态/原因的方块发生次数。路径可能涉及隐私，宿主导出时应按需处理。
+
+`Reason` 区分 `IntentionalInvisible`、`UnsupportedRenderer`、`EmptyModelUnknownIntent`、`MissingBlockstate`、`NoMatchingVariant`、`InvalidBlockstate`、`MissingModelOrParent`、`InvalidModel`、`InvalidModelGeometry`、`UnresolvedTextureReference`、`MissingTexture`、`TextureDecodeFailure`、`InvalidAnimationMetadata`、`DegenerateFace` 和 `WaterloggedFluidUnsupported`。普通渲染失败输出黑紫单位立方体；空气、屏障、光源方块和结构空位保持不可见。占位不表示专用 renderer 已实现，也不作为邻面剔除的可信遮挡体。
+
+纹理在 Windows x64 的 WIC 路径校验，并按 `.png.mcmeta` 动画尺寸和首个帧序索引静态取帧；无动画元数据的非正方形纹理保留尺寸。单张解码纹理上限为 16M 像素、任一边 16384；超限抛出 `InvalidDataException`，内存不足仍传播，不伪装成缺失材质。加载和烘焙也需要配套 Native DLL，但不要求先连接视口。内部成对初始化/释放线程 COM，支持后台加载；旧 Native DLL 不可与新增图像解码入口的托管程序集混用。
+
+基础流体处理邻接、层级高度和面剔除，水走 Alpha Blend、岩浆走不透明深度。目前没有完整原版流体模拟、含水流体几何、动画时钟、复杂 Block Entity Renderer、生物群系光照或高级阴影。含水方块的普通几何保留，并单独输出能力诊断。
+
 `CapturePngAsync` 在原生端重新绘制当前场景但不呈现，随后回读颜色纹理并编码为 PNG。需要已连接渲染器，并从其所属线程调用：
 
 ```csharp

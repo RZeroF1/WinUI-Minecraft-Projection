@@ -6,6 +6,10 @@ An independent .NET SDK for reading Minecraft projections, loading game resource
 
 Supports Litematica `.litematic` and Sponge `.schem`. The managed assembly targets `net10.0` without a managed UI framework dependency. The native renderer currently supports Windows x64 only.
 
+Visible blocks that fail to render use a black/magenta placeholder. `ProjectionSession.RenderDiagnostics` reports grouped reasons, states and source-coordinate samples; intentionally invisible vanilla blocks remain invisible. Animation metadata selects a static first frame; world-space cull faces, cross plants and basic neighboring fluids are supported. Complex block entity renderers, waterlogged fluid geometry, complete fluid animation and advanced lighting remain limited. Packages use an explicit public file list, validated for both NuGet and symbols archives.
+
+Vanilla panes with all four horizontal connections explicitly false are hidden by default to remove floating end caps in test scenes. Use `new ProjectionSession(new ProjectionRenderOptions { HideIsolatedGlassPanes = false })` to retain their source geometry. Connected panes, source blocks and material counts are unchanged.
+
 ## Installation and integration
 
 Version: `0.1.1`.

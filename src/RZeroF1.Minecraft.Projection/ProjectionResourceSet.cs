@@ -17,6 +17,7 @@ internal sealed class ProjectionResourceSet : IDisposable
     private long _cachedBytes;
     private bool _disposed;
     private bool _modelsLoaded;
+    private readonly Dictionary<string, ProjectionTextureImage> _images = new(StringComparer.OrdinalIgnoreCase);
 
     internal ProjectionResourceSet(string clientJarPath)
     {
@@ -39,6 +40,7 @@ internal sealed class ProjectionResourceSet : IDisposable
             throw new FileNotFoundException("资源包不存在。", path);
         _layers.Add(ZipFile.OpenRead(path));
         _cache.Clear();
+        _images.Clear();
         _localizedNames.Clear();
         _cachedBytes = 0;
         _modelsLoaded = false;
@@ -148,6 +150,20 @@ internal sealed class ProjectionResourceSet : IDisposable
         return fallback.Length == 0
             ? normalized
             : char.ToUpperInvariant(fallback[0]) + fallback[1..];
+    }
+
+    internal ProjectionTextureImage LoadTexture(string textureId)
+    {
+        if (textureId == "__missing__") return new(ProjectionTextureLoader.MissingPng, false);
+        if (_images.TryGetValue(textureId, out var image)) return image;
+        var path = ResourcePath(textureId, "textures", ".png");
+        image = ProjectionTextureLoader.Load(Read(path), Read(path + ".mcmeta"));
+        if (_cachedBytes + image.Png.Length <= MaxCachedBytes)
+        {
+            _images[textureId] = image;
+            _cachedBytes += image.Png.Length;
+        }
+        return image;
     }
 
     internal byte[]? ReadTexture(string textureId)
@@ -342,6 +358,7 @@ internal sealed class ProjectionResourceSet : IDisposable
             layer.Dispose();
         _layers.Clear();
         _cache.Clear();
+        _images.Clear();
         _localizedNames.Clear();
         _cachedBytes = 0;
     }

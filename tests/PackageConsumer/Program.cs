@@ -54,7 +54,11 @@ camera.SetMode(ProjectionCameraMode.Free);
 camera.MoveFree(Vector3.UnitX, .1f);
 Assert(camera.OrbitTarget == anchor && camera.FreePosition.X != anchor.X, "public camera API is usable from package reference");
 
+Assert(new ProjectionRenderOptions().HideIsolatedGlassPanes, "pane filter defaults to enabled from NuGet");
+using var previewSession = new ProjectionSession(new ProjectionRenderOptions { HideIsolatedGlassPanes = false });
+Assert(previewSession.RenderDiagnostics.Count == 0, "preview options constructor is available from NuGet");
 using var session = new ProjectionSession();
 Assert(session.Document is null && session.CaptureDiagnostics().DocumentBytes == 0, "public session API constructs from package");
+Assert(session.RenderDiagnostics.Count == 0, "grouped rendering diagnostics are publicly accessible");
 Assert(!session.RenderFrame(), "render frame is harmless before renderer attachment");
 Console.WriteLine($"PASS package consumer; native={nativePath}; bytes={nativeInfo.Length}");
