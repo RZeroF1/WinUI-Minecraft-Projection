@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -16,18 +17,48 @@ internal sealed class ProjectionResourceSet : IDisposable
     private readonly HashSet<string> _forceTranslucent = new(StringComparer.OrdinalIgnoreCase);
     private long _cachedBytes;
     private bool _disposed;
+    private static long _nextGeneration;
+    private readonly FileStream _clientStream;
+    private ProjectionVersionSelection? _clientSelection;
+    internal long Generation { get; private set; } = Interlocked.Increment(ref _nextGeneration);
+
+    internal ProjectionVersionSelection SelectClient(CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_clientSelection is not null) return _clientSelection;
+        var position = _clientStream.Position;
+        try
+        {
+            _clientStream.Position = 0;
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = new byte[64 * 1024];
+            int count;
+            while ((count = _clientStream.Read(buffer)) != 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                hash.AppendData(buffer, 0, count);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            return _clientSelection = ProjectionVersionProfile.SelectClient(Convert.ToHexString(hash.GetHashAndReset()));
+        }
+        finally { _clientStream.Position = position; }
+    }
     private bool _modelsLoaded;
     private readonly Dictionary<string, ProjectionTextureImage> _images = new(StringComparer.OrdinalIgnoreCase);
+    private ProjectionSpriteResolver? _sprites;
+    internal ProjectionSpriteResolver Sprites => _sprites ??= new(this);
 
     internal ProjectionResourceSet(string clientJarPath)
     {
         ClientJarPath = Path.GetFullPath(clientJarPath);
-        var stream = File.OpenRead(ClientJarPath);
-        _layers.Add(new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false));
+        _clientStream = File.OpenRead(ClientJarPath);
+        try { _layers.Add(new ZipArchive(_clientStream, ZipArchiveMode.Read, leaveOpen: false)); }
+        catch { _clientStream.Dispose(); throw; }
     }
 
     internal string ClientJarPath { get; }
-    internal long CachedBytes => _cachedBytes;
+    internal long CachedBytes => _cachedBytes + (_sprites?.EstimatedCpuBytes ?? 0);
     internal IReadOnlyList<string> Warnings => _warnings;
     internal IReadOnlySet<string> ForceTranslucent => _forceTranslucent;
     internal IReadOnlyDictionary<string, ProjectionBlockModelDefinition> Models { get; private set; } =
@@ -39,8 +70,10 @@ internal sealed class ProjectionResourceSet : IDisposable
         if (!File.Exists(path))
             throw new FileNotFoundException("资源包不存在。", path);
         _layers.Add(ZipFile.OpenRead(path));
+        Generation = Interlocked.Increment(ref _nextGeneration);
         _cache.Clear();
         _images.Clear();
+        _sprites = null;
         _localizedNames.Clear();
         _cachedBytes = 0;
         _modelsLoaded = false;
@@ -77,6 +110,29 @@ internal sealed class ProjectionResourceSet : IDisposable
         }
 
         return null;
+    }
+
+    // Atlas definitions append their sources from low to high resource layers.
+    // Texture/model reads retain the existing last-layer-wins behavior.
+    internal IEnumerable<byte[]> ReadAtlasLayers(string path)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ValidatePath(path);
+        foreach (var layer in _layers)
+        {
+            var entry = layer.GetEntry(path);
+            if (entry is null) continue;
+            if (entry.Length > MaxResourceBytes) throw new InvalidDataException("AtlasResourceBudgetExceeded");
+            using var input = entry.Open();
+            using var output = new MemoryStream((int)entry.Length);
+            input.CopyTo(output);
+            yield return output.ToArray();
+        }
+    }
+
+    internal void SpriteWarning(string message)
+    {
+        if (_warnings.Count < 500) _warnings.Add(message);
     }
 
     internal void LoadModelDefinitions(CancellationToken cancellationToken = default)
@@ -359,6 +415,7 @@ internal sealed class ProjectionResourceSet : IDisposable
         _layers.Clear();
         _cache.Clear();
         _images.Clear();
+        _sprites = null;
         _localizedNames.Clear();
         _cachedBytes = 0;
     }

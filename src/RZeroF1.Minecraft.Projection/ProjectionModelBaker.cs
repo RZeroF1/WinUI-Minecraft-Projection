@@ -34,13 +34,15 @@ internal sealed class ProjectionBakedScene
     public required ProjectionPosition Max { get; init; }
     public int BlockCount { get; init; }
     public IReadOnlyList<ProjectionRenderDiagnostic> Diagnostics { get; init; } = [];
+    internal IReadOnlyList<ProjectionRenderPlan> RenderPlans { get; init; } = [];
     public int MaterialCount => TexturePng.Count;
     public int TriangleCount => Batches.Sum(static batch => batch.Indices.Length / 3);
     public long EstimatedCpuBytes =>
         Batches.Sum(static batch =>
             batch.Vertices.LongLength * 36L +
             batch.Indices.LongLength * sizeof(uint)) +
-        TexturePng.Values.Sum(static texture => texture?.LongLength ?? 0);
+        TexturePng.Values.Sum(static texture => texture?.LongLength ?? 0) +
+        RenderPlans.Sum(plan => plan.EstimatedCpuBytes);
 }
 
 internal sealed partial class ProjectionModelBaker
@@ -57,6 +59,15 @@ internal sealed partial class ProjectionModelBaker
     private readonly Dictionary<ProjectionPosition, (ProjectionModelPlacement Placement, ProjectionModelInstance Model)[]> _resolved = [];
     private readonly Dictionary<(string State, string Code, string? Model, string? Texture, string? Region), DiagnosticBuilder> _diagnostics = [];
     private int _blendFace;
+    private readonly List<ProjectionRenderPlan> _plans = [];
+    private readonly Dictionary<ProjectionPosition, ProjectionSpecialModelResult> _specialModels = [];
+    private readonly Dictionary<string, ProjectionSpecialModelResult> _specialTemplates = new(StringComparer.Ordinal);
+    private long _specialTemplateBytes;
+    private long _specialOutputBytes;
+    internal long MaxSpecialGeometryBytes { get; init; } = 256L * 1024 * 1024;
+    private ProjectionVersionProfile _profile = null!;
+    private long _planBytes;
+    internal long MaxRenderPlanBytes { get; init; } = 256L * 1024 * 1024;
     private readonly Dictionary<string, string> _blockstateFailures = new(StringComparer.OrdinalIgnoreCase);
 
     public ProjectionModelBaker(ProjectionResourceSet resources, ProjectionRenderOptions? renderOptions = null)
@@ -70,6 +81,7 @@ internal sealed partial class ProjectionModelBaker
         IProgress<ProjectionLoadProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _resources.LoadModelDefinitions(cancellationToken);
         _resolver = new ProjectionModelResolver(_resources.Models);
         _blockstates.Clear();
@@ -79,6 +91,7 @@ internal sealed partial class ProjectionModelBaker
         _materialTextureIds.Clear();
         _warnings.Clear();
         _opaqueFullCubes.Clear();
+        _specialModels.Clear();
 
         var center = new Vector3(
             (document.Min.X + document.Max.X + 1) / 2f,
@@ -93,6 +106,8 @@ internal sealed partial class ProjectionModelBaker
             var block = document.Blocks[index];
             var state = document.Palette[block.StateIndex];
             AddBlock(document, block, state, center, blockMap);
+            if (_specialModels.TryGetValue(block.Position, out var special))
+                AddSpecial(block, special, center, cancellationToken, state.Key);
             if ((index & 0x3ff) == 0)
                 progress?.Report(new ProjectionLoadProgress(
                     "mesh",
@@ -101,6 +116,9 @@ internal sealed partial class ProjectionModelBaker
                     $"生成网格 {index:N0}/{document.Blocks.Count:N0}"));
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_resources.Generation != _profile.ResourceGeneration)
+            throw new InvalidOperationException("ResourceGenerationChangedDuringBake");
         return new ProjectionBakedScene
         {
             Batches = _batches.Values
@@ -113,6 +131,7 @@ internal sealed partial class ProjectionModelBaker
             Min = document.Min,
             Max = document.Max,
             Diagnostics = _diagnostics.Values.Select(item => item.ToResult(document.SourcePath, _resources.ClientJarPath)).ToArray(),
+            RenderPlans = Array.AsReadOnly(_plans.ToArray()),
             BlockCount = document.Blocks.Count
         };
     }
@@ -128,6 +147,7 @@ internal sealed partial class ProjectionModelBaker
         if (axis is < 0 or > 2)
             throw new ArgumentOutOfRangeException(nameof(axis));
 
+        cancellationToken.ThrowIfCancellationRequested();
         _resources.LoadModelDefinitions(cancellationToken);
         _resolver = new ProjectionModelResolver(_resources.Models);
         _blockstates.Clear();
@@ -156,6 +176,9 @@ internal sealed partial class ProjectionModelBaker
             cancellationToken);
         AddBoundary(document, index, blockMap, center, axis, maximum, upperDirection, cancellationToken);
 
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_resources.Generation != _profile.ResourceGeneration)
+            throw new InvalidOperationException("ResourceGenerationChangedDuringBake");
         return new ProjectionBakedScene
         {
             Batches = _batches.Values
@@ -168,6 +191,7 @@ internal sealed partial class ProjectionModelBaker
             Min = document.Min,
             Max = document.Max,
             Diagnostics = _diagnostics.Values.Select(item => item.ToResult(document.SourcePath, _resources.ClientJarPath)).ToArray(),
+            RenderPlans = Array.AsReadOnly(_plans.ToArray()),
             BlockCount = 0
         };
     }
@@ -186,8 +210,11 @@ internal sealed partial class ProjectionModelBaker
         {
             cancellationToken.ThrowIfCancellationRequested();
             var neighbor = Neighbor(block.Position, direction);
-            if (!blockMap.TryGetValue(neighbor, out var next)) continue;
             var state = document.Palette[block.StateIndex];
+            if (!blockMap.TryGetValue(neighbor, out var next))
+            {
+                continue;
+            }
             if (!_opaqueFullCubes.Contains(neighbor) &&
                 !(state.Name is "minecraft:water" or "minecraft:lava" && document.Palette[next.StateIndex].Name == state.Name)) continue;
 
@@ -198,6 +225,8 @@ internal sealed partial class ProjectionModelBaker
                 center,
                 blockMap,
                 direction);
+            // Special faces are never neighbor-culled, so the main scene already
+            // contains them. Native world clipping handles their actual AABB.
         }
     }
 
@@ -267,6 +296,55 @@ internal sealed partial class ProjectionModelBaker
                 }
             }
         }
+    }
+
+    private void AddSpecial(
+        ProjectionBlock block,
+        ProjectionSpecialModelResult special,
+        Vector3 center,
+        CancellationToken cancellationToken,
+        string stateKey)
+    {
+        if (!special.HasGeometry) return;
+        foreach (var primitive in special.Primitives)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _specialOutputBytes = checked(_specialOutputBytes + primitive.Vertices.LongLength * 36 + primitive.Indices.LongLength * 4);
+            if (_specialOutputBytes > MaxSpecialGeometryBytes) throw new InvalidDataException("SpecialGeometryBudgetExceeded");
+            var vertices = primitive.Vertices.Select(vertex =>
+            {
+                vertex.Position += new Vector3(block.Position.X, block.Position.Y, block.Position.Z) - center;
+                return vertex;
+            }).ToArray();
+            AddSpecialPrimitive(block.Position, stateKey, primitive.Material, vertices, primitive.Indices);
+        }
+    }
+
+    private void AddSpecialPrimitive(
+        ProjectionPosition blockPosition,
+        string stateKey,
+        ProjectionMaterialRequest material,
+        ProjectionMeshVertex[] vertices,
+        uint[] indices)
+    {
+        EnsureTexture(material.TextureId);
+        _materialTextureIds.TryAdd(stateKey, material.TextureId);
+        var mode = material.Role switch
+        {
+            ProjectionMaterialRole.Cutout => 1,
+            ProjectionMaterialRole.Blend => 2,
+            _ => 0
+        };
+        var chunk = (FloorDiv(blockPosition.X, 16), FloorDiv(blockPosition.Y, 16), FloorDiv(blockPosition.Z, 16));
+        var key = (material.TextureId, mode, chunk.Item1, chunk.Item2, chunk.Item3, mode == 2 ? ++_blendFace : 0);
+        if (!_batches.TryGetValue(key, out var batch))
+        {
+            batch = new BatchBuilder(material.TextureId, mode, chunk.Item1, chunk.Item2, chunk.Item3);
+            _batches[key] = batch;
+        }
+        var first = (uint)batch.Vertices.Count;
+        batch.Vertices.AddRange(vertices);
+        batch.Indices.AddRange(indices.Select(index => index + first));
     }
 
     private void AddFluid(ProjectionDocument document, ProjectionBlock block, ProjectionState state, Vector3 center,

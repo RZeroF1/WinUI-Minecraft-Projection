@@ -64,8 +64,11 @@ internal static class NbtParser
 		return new NbtDocument(tag);
 	}
 
-	private static NbtDocument ParseBinaryCore(ReadOnlySpan<byte> data) {
-		var reader = new SpanNbtReader(data);
+	internal static NbtDocument ParseUncompressed(ReadOnlyMemory<byte> data, NbtReadLimits limits, CancellationToken cancellationToken) =>
+        ParseBinaryCore(data.Span, limits, cancellationToken);
+
+    private static NbtDocument ParseBinaryCore(ReadOnlySpan<byte> data, NbtReadLimits? limits = null, CancellationToken cancellationToken = default) {
+        var reader = new SpanNbtReader(data, limits ?? new NbtReadLimits(), cancellationToken);
 		var type = (NbtTagType)reader.ReadByte();
 		if (type == NbtTagType.End) {
 			return new NbtDocument(NbtCompound.Empty);
@@ -170,8 +173,18 @@ internal static class NbtParser
 	{
 		private readonly ReadOnlySpan<byte> _data;
 		private int _pos;
+        private readonly NbtReadLimits _limits;
+        private readonly CancellationToken _cancellationToken;
+        private int _depth;
+        private int _nodes;
+        private long _allocated;
 
-		public SpanNbtReader(ReadOnlySpan<byte> data) {
+        public SpanNbtReader(ReadOnlySpan<byte> data, NbtReadLimits limits, CancellationToken cancellationToken) {
+            _limits = limits;
+            _cancellationToken = cancellationToken;
+            _depth = 0;
+            _nodes = 0;
+            _allocated = 0;
 			_data = data;
 			_pos = 0;
 		}
@@ -227,7 +240,7 @@ internal static class NbtParser
 		private ReadOnlySpan<byte> Take(int count) {
 			var data = _data;
 			var pos = _pos;
-			if ((uint)(pos + count) > (uint)data.Length) {
+			if (count < 0 || count > data.Length - pos) {
 				ThrowEnd();
 			}
 			_pos = pos + count;
@@ -253,11 +266,27 @@ internal static class NbtParser
 				return string.Empty;
 			}
 			var slice = Take(length);
+            Charge(24 + length * 2L);
 			return DecodeMutf8(slice);
 		}
 
-		public NbtTag ReadTagPayload(NbtTagType type) {
-			switch (type) {
+		private void Charge(long bytes) {
+            _cancellationToken.ThrowIfCancellationRequested();
+            _allocated = checked(_allocated + bytes);
+            if (_allocated > _limits.MaxAllocatedBytes) throw new InvalidDataException("NbtAllocationBudgetExceeded");
+        }
+
+        public NbtTag ReadTagPayload(NbtTagType type) {
+            _cancellationToken.ThrowIfCancellationRequested();
+            if (++_nodes > _limits.MaxNodes || ++_depth > _limits.MaxDepth)
+                throw new InvalidDataException("NbtStructureBudgetExceeded");
+            Charge(32);
+            try { return ReadPayload(type); }
+            finally { _depth--; }
+        }
+
+        private NbtTag ReadPayload(NbtTagType type) {
+            switch (type) {
 				case NbtTagType.Byte:
 					return NbtByte.GetCached((sbyte)ReadByte());
 				case NbtTagType.Short:
@@ -295,6 +324,7 @@ internal static class NbtParser
 			string[]? keys = null;
 			NbtTag[]? values = null;
 			var count = 0;
+            var names = new HashSet<string>(StringComparer.Ordinal);
 
 			while (true) {
 				var type = (NbtTagType)ReadByte();
@@ -302,7 +332,8 @@ internal static class NbtParser
 					break;
 				}
 
-				var name = ReadString();
+				Charge(32);
+                var name = ReadString();
 				var value = ReadTagPayload(type);
 				if (name.Length == 0) {
 					continue;
@@ -318,7 +349,8 @@ internal static class NbtParser
 					Array.Resize(ref values, newCapacity);
 				}
 
-				keys[count] = name;
+				if (!names.Add(name)) throw new InvalidDataException("Duplicate NBT compound key.");
+                keys[count] = name;
 				values![count] = value;
 				count++;
 			}
@@ -341,7 +373,11 @@ internal static class NbtParser
 				return elementType == NbtTagType.End ? NbtList.EmptyEnd : new NbtList(elementType, new List<NbtTag>(0), takeOwnership: true);
 			}
 
-			var items = new List<NbtTag>(length);
+			if (elementType is < NbtTagType.Byte or > NbtTagType.LongArray ||
+                length > _data.Length - _pos || length > _limits.MaxNodes - _nodes)
+                throw new InvalidDataException("Invalid or excessive NBT list length.");
+            Charge(24 + length * 8L);
+            var items = new List<NbtTag>(length);
 			for (var i = 0; i < length; i++) {
 				items.Add(ReadTagPayload(elementType));
 			}
@@ -360,6 +396,7 @@ internal static class NbtParser
 			}
 
 			var slice = Take(length);
+			Charge(24 + length);
 			var buffer = new byte[length];
 			slice.CopyTo(buffer);
 			return buffer;
@@ -377,6 +414,7 @@ internal static class NbtParser
 
 			var byteCount = checked(length * sizeof(int));
 			var slice = Take(byteCount);
+			Charge(24 + byteCount);
 			var buffer = new int[length];
 			slice.CopyTo(MemoryMarshal.AsBytes(buffer.AsSpan()));
 			if (BitConverter.IsLittleEndian) {
@@ -397,6 +435,7 @@ internal static class NbtParser
 
 			var byteCount = checked(length * sizeof(long));
 			var slice = Take(byteCount);
+			Charge(24 + byteCount);
 			var buffer = new long[length];
 			slice.CopyTo(MemoryMarshal.AsBytes(buffer.AsSpan()));
 			if (BitConverter.IsLittleEndian) {

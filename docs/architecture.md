@@ -9,7 +9,12 @@
 RZeroF1.Minecraft.Projection
   ProjectionSession：生命周期、加载、场景、切片缓存、截图、诊断
   ProjectionReader 与受限 NBT 解析器
+  BlockEntityStore → VisualStateAdapter + 独立源数据/客户端 Profile
+  能力登记 → 每个源方块的 RenderPlan 与贡献诊断
   ProjectionResourceSet、方块状态与模型解析、网格构建
+  ProjectionPartGraph / Pose / Cuboid / Quad
+  ProjectionSpriteResolver + 逻辑材质角色
+  P2 静态专用模型生产者
   ProjectionCamera 与 ProjectionSliceIndex
        │
        ▼
@@ -44,6 +49,16 @@ WIC 将纹理解码为 RGBA 后上传到 GPU。截图从渲染器颜色纹理复
 标准 JSON 面采用背面剔除，保留 Cross 的原始两张平面及正反面定义。退化面不上传，法线保持有限值。透明表面按独立 quad 中心排序，水不写深度、岩浆写深度；相交透明面仍不保证精确排序。纹理生成 mip 链，近景保留 Point 像素外观，远景普通/Blend 材质使用各向异性过滤；Cutout 暂保留首级 Point 覆盖，未实现远景 Alpha 覆盖 mip 策略。
 
 ## 资源所有权与释放
+
+文档拥有内部 Block Entity Store，保留有预算的原始 payload 和来源；外观适配输出 SDK 内部 DTO。实际打开的客户端文件哈希选择原版渲染 Profile，源文档 DataVersion 选择独立的数据 schema；未知身份不使用相近端点。显式 Block→BE 类型表关联原版注册，普通 JSON 的存在不取消专用贡献，也不靠方块名称片段推断 renderer。
+
+`ProjectionRenderPlanResolver` 在普通烘焙准备阶段生成需求，并组合原有 JSON/流体生产者的实际观察。计划保留源位置/Region、资源代际、外观 Profile、世界包围盒和各贡献结果。普通模型与专用主体/文字/物品/实体/效果可同时存在；缺少附加内容时保留已完成几何。P1 没有部件图、字体、物品/实体 renderer 或新 shader。现有 SourceBlock 统计、Cullface、切片补面和 Native 上传路径继续复用。
+
+计划不跨文档或外观共享可变缓存；切包后重建，提交场景前检查资源代际。内部计划预算与数据预算分别限制新分配，场景估算计入计划。缓存仍由原 Session/ResourceSet 拥有；同一 Session 的资源操作继续由宿主串行安排，取消并等待后才能 Clear/Dispose。
+
+P2 的特殊几何由不可变数值配方 `ProjectionPartRecipes` 与独立实例姿态组成，经 `ProjectionSpecialMeshBuilder` 输出到现有 `BatchBuilder`。Cuboid/Quad 统一处理逻辑 UV、面法线、镜像绕序、部件可见性、材质和 AABB。箱体单双件、床头尾、潜影盒六向、钟体、共享七部件 BookModel、陶罐四面和雕像四姿态共用此协议。特殊面没有邻面剔除，因此切片边界不重复上传它们；Native 世界平面处理越过源格的书本和雕像。源计数仍来自 `ProjectionDocument`。Double128 使用连续 UV，并将几何分配给原来的两个源格。
+
+`ProjectionSpriteResolver` 不持有 Native 句柄。Atlas 定义按资源层追加 source，纹理仍按既有优先级最后覆盖；解析结果以资源 Generation 归属，Reload 清除依赖。P2 支持 direct、directory、single、unstitch 和 filter 子集，区分 divisor 裁剪单位、模型画布与 PNG/首帧尺寸。色板派生、字体、Item special 和外部皮肤未实现。精确资源端点为 1.19.2/26.2/26.3，箱子另有 1.14.4 Double128 验收；其它端点显式未验证，不按相近版本推断支持。
 
 `ProjectionSession` 持有文档、资源归档、CPU 场景、切片缓存、相机及原生渲染器。连接后的原生渲染器持有目标的独立 COM 引用，拥有 D3D11 设备、上下文、交换链或颜色纹理、深度缓冲区及网格资源。
 

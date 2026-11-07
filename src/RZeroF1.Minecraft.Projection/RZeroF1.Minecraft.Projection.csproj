@@ -14,7 +14,7 @@
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
-    <PackageReleaseNotes>修复楼梯等矩形面的 UV Lock 旋转拉伸；孤立玻璃板预览过滤默认开启，可显式关闭并保留原始材料统计。修复渲染占位、动画首帧、模型遮挡与旋转、薄面和基础流体；新增分组渲染诊断；限定公开包内容。新增 VirtualSurfaceImageSource GPU 输出，支持 XAML 亚克力叠加；保留 SwapChainPanel 接入，统一截图来源，补充显存估算并修正尺寸状态更新；统一中文文档并提供英文 README。</PackageReleaseNotes>
+    <PackageReleaseNotes>内部保留 Litematic/Sponge v2/v3 Block Entity，独立识别源数据与客户端 Profile；接入组合贡献计划和 Partial/未知数据诊断；新增共享部件、逻辑 UV、Sprite source 子集和限定资源端点的首批静态专用模型（详见 API 文档），保留普通模型与流体及原 Native ABI。修复楼梯等矩形面的 UV Lock 旋转拉伸；孤立玻璃板预览过滤默认开启，可显式关闭并保留原始材料统计。修复渲染占位、动画首帧、模型遮挡与旋转、薄面和基础流体；新增分组渲染诊断；限定公开包内容。新增 VirtualSurfaceImageSource GPU 输出，支持 XAML 亚克力叠加；保留 SwapChainPanel 接入，统一截图来源，补充显存估算并修正尺寸状态更新；统一中文文档并提供英文 README。</PackageReleaseNotes>
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>https://github.com/RZeroF1/WinUI-Minecraft-Projection</RepositoryUrl>
     <PackageProjectUrl>https://github.com/RZeroF1/WinUI-Minecraft-Projection</PackageProjectUrl>
@@ -28,6 +28,12 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.403" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Capabilities\vanilla-capabilities.json"
+                      LogicalName="RZeroF1.Minecraft.Projection.vanilla-capabilities.json" />
+    <None Update="Capabilities\vanilla-capabilities.json" Pack="false" />
   </ItemGroup>
 
   <ItemGroup>

@@ -6,7 +6,11 @@ internal sealed record LitematicReadOptions(
     long MaxCompressedBytes = 10 * 1024 * 1024,
     long MaxDecompressedBytes = 50 * 1024 * 1024,
     int MaxRegions = 64,
-    long MaxVolume = 5_000_000);
+    long MaxVolume = 5_000_000,
+    int MaxBlockEntities = 250_000,
+    long MaxBlockEntityBytes = 64L * 1024 * 1024,
+    long MaxBlockEntityRecordBytes = 1024 * 1024,
+    NbtReadLimits? NbtLimits = null);
 
 internal sealed record SchematicPosition(int X, int Y, int Z);
 
@@ -39,7 +43,8 @@ internal sealed record SchematicBlock(
     SchematicPosition Position,
     SchematicBlockState State,
     NbtCompound? BlockEntity = null,
-    string? Region = null);
+    string? Region = null,
+    int BlockEntityRecordIndex = -1);
 
 internal sealed record SchematicRegion(
     string Name,
@@ -56,6 +61,7 @@ internal sealed class LitematicSchematic
     public int? FormatVersion { get; init; }
     public required IReadOnlyList<SchematicRegion> Regions { get; init; }
     public required IReadOnlyList<SchematicBlock> Blocks { get; init; }
+    public IReadOnlyList<string> Warnings { get; init; } = [];
     public required SchematicPosition Min { get; init; }
     public required SchematicPosition Max { get; init; }
 
