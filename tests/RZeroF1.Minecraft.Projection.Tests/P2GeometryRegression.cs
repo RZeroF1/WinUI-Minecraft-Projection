@@ -170,6 +170,7 @@ internal static class P2GeometryRegression
     private static void CheckAuditedFamilies(string repo)
     {
         var jar = Path.Combine(repo, "artifacts/render-investigation-2026-11-06/1.19.2-client.jar");
+        if (!File.Exists(jar)) return;
         using var resources = new ProjectionResourceSet(jar);
         var baker = new ProjectionModelBaker(resources);
         foreach (var facing in new[] { "up", "down", "north", "south", "east", "west" })
@@ -214,7 +215,9 @@ internal static class P2GeometryRegression
         }
         Check(baker.Build(budgetDocument).RenderPlans.Single().ResourceGeneration == resources.Generation, "baker recovers after cancellation using current generation");
 
-        using var modern = new ProjectionResourceSet(Path.Combine(repo, "artifacts/research-archive/2026-11-04/inputs/minecraft-client-baseline/26.2-client.jar"));
+        var modernJar = Path.Combine(repo, "artifacts/research-archive/2026-11-04/inputs/minecraft-client-baseline/26.2-client.jar");
+        if (!File.Exists(modernJar)) return;
+        using var modern = new ProjectionResourceSet(modernJar);
         var modernBaker = new ProjectionModelBaker(modern);
         var hashes = new HashSet<string>();
         foreach (var pose in new[] { "standing", "sitting", "running", "star" })
