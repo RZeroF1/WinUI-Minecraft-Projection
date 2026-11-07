@@ -41,6 +41,14 @@ dotnet restore tests/PackageConsumer/PackageConsumer.csproj -r win-x64 --configf
 dotnet run --project tests/PackageConsumer/PackageConsumer.csproj -c Release -r win-x64 --no-restore
 ```
 
+## 当前源码的 P1 架构变更
+
+内部保留 Litematic/Sponge v2/v3 Block Entity 数据，分离源版本适配与实际客户端 Profile，并接入组合渲染计划和贡献诊断。普通模型和流体继续复用原实现；已有底座但附加内容不足时明确报告 Partial。此阶段没有新增专用部件几何、公开类型或 Native ABI，详见 [数据与诊断契约](api.md)。版本仍为本地开发声明，不能据此推断这些变更已经发布。
+
+## 当前源码的 P2 架构变更
+
+内部增加共享 Cuboid/Quad/ModelPartGraph/Pose、逻辑 Sprite/材质角色和首批静态专用模型生产者。现有公开 API、Native ABI、Windows x64 限制和包白名单保持不变；动态专用效果及 P3/P4 能力未因本地 P2 包而宣称完整支持。
+
 ## 0.1.1 版本变更
 
 - 新增 `AttachSurfaceRenderer`，支持将 D3D11 画面经 GPU 复制到 `VirtualSurfaceImageSource`，用于宿主的 XAML 亚克力叠加场景。

@@ -120,6 +120,10 @@ await session.LoadAsync(
 
 `ProjectionDocument` 提供 `Format`、`DataVersion`、`Min`、`Max`、`Width`、`Height`、`Length`、`Blocks`、`Palette`、`Regions` 和 `EstimatedCpuBytes`。方块记录包含位置、调色板状态索引和可选区域名称。
 
+文档在内部保留 Litematic 与 Sponge v2/v3 的 Block Entity 数据、源局部坐标、格式版本及来源记录。第三方 NBT 对象不通过公开 API 返回。Litematic 可由已知的赢家方块补充省略的类型 ID；显式错误 ID 不可信，Sponge 缺少必需 ID 也不可信。Sponge 的局部 `Pos` 加一次 `Offset`；Litematic 的局部坐标以 Region 最小角为原点，负尺寸也遵循此规则。重叠 Region 按文件顺序最后写入获胜，后写空气也移除旧方块和旧 payload；后写方块没有 payload 时不会继承旧记录。孤立、越界、重复或缺字段的数据产生警告；重复位置取最后一条，有效位置的损坏末条不会恢复旧内容。
+
+新增数据受内部预算约束：最多 250,000 条 Block Entity、64 MiB payload 估算、单条 1 MiB；被重叠或坐标校验丢弃的记录也计入预算。NBT 解析限制 64 层、4,000,000 节点及 512 MiB 分配估算，分配列表前检查长度。超限或损坏数据使加载失败；取消和内存不足继续传播。`EstimatedCpuBytes` 包含保留的 payload；外部保留文档引用会继续保留这些托管数据，`Clear`/`Dispose` 只释放 session 的所有权。
+
 `LoadAsync` 开始时先清理当前场景；失败或取消不保证保留原投影。`ReloadAsync` 使用当前投影路径及已选客户端重新加载，不自动保留此前应用的资源包，必要时由宿主重新应用。
 
 `Clear` 释放当前文档、资源归档、CPU 网格、图标与切片缓存，并清空原生场景；已连接的渲染器保留，可继续加载下一个投影。
@@ -217,6 +221,20 @@ using var session = new ProjectionSession(new ProjectionRenderOptions
 `ProjectionRenderDiagnostic` 包含 `SourcePath`、`ClientJarPath`、`BlockId`、完整 `Blockstate`、`Region`、`Reason`、`Model`、`Texture`、`Count` 和最多 16 个原始源坐标 `Positions`。`Count` 不受 `Warnings` 的 500 条上限截断；退化面的 Count 为面事件数，其余为对应状态/原因的方块发生次数。路径可能涉及隐私，宿主导出时应按需处理。
 
 `Reason` 区分 `IntentionalInvisible`、`UnsupportedRenderer`、`EmptyModelUnknownIntent`、`MissingBlockstate`、`NoMatchingVariant`、`InvalidBlockstate`、`MissingModelOrParent`、`InvalidModel`、`InvalidModelGeometry`、`UnresolvedTextureReference`、`MissingTexture`、`TextureDecodeFailure`、`InvalidAnimationMetadata`、`DegenerateFace` 和 `WaterloggedFluidUnsupported`。普通渲染失败输出黑紫单位立方体；空气、屏障、光源方块和结构空位保持不可见。占位不表示专用 renderer 已实现，也不作为邻面剔除的可信遮挡体。
+
+组合计划增加 `Capability.<总体结果>.<贡献>.<状态>`，例如 `Capability.Partial.Text.UnknownData`、`Capability.Partial.SpecialModel.Unsupported`、`Capability.StaticLimited.Fluid.StaticLimited`。未知版本/类型另记 `Capability.<总体结果>.UnknownVersion`、`UnknownType` 或 `UnknownRenderPath`；payload 身份问题另记 `MissingBlockEntityId`、`BlockEntityTypeMismatch`、`UnknownBlockEntityAssociation`。同一源方块可产生多个诊断组，不能将各组 Count 相加作为材料或源块总数。
+
+P2 在内部将静态专用部件烘焙到同一批次路径。`ProjectionPose`、`ProjectionPartGraph`、`ProjectionCuboid`、`ProjectionQuad` 和 `ProjectionMaterialRequest` 分离模板、实例姿态、枢轴、镜像、逻辑画布与材质角色。`ProjectionSpriteResolver` 处理 direct、atlas `directory`/`single`/`unstitch`/`filter` 子集、静态首帧和资源代际；逻辑画布、裁剪单位和 PNG 实际像素尺寸分别保存，裁剪只映射一次。
+
+首批静态配方的已验收资源端点为 1.19.2、26.2、26.3；另验收 1.14.4 的 Double128 箱子。其它登记端点不会自动取得 P2 几何支持。箱子/陷阱箱/末影箱、潜影盒、实体床、钟、共享七部件书、陶罐基础和铜傀儡四姿态通过现有 `ProjectionMaterialBatch` 与 Native 上传。开合、摆动和翻页使用有记录的静态姿态并报告 `StaticLimited`；雕像的四种静态姿态不依赖活体动画。陶罐饰片为明确四面 brick 时附加图案 `KnownEmpty`，缺数据为 `UnknownData`，有饰纹为未支持，因此相应总体状态可为 `Partial`。26.2/26.3 床继续走普通 Block Model。
+
+P2 的材质角色映射到既有 Opaque、Cutout、Blend 三种 Native 模式。特殊主体的主网格不会被邻居剔面，切片用现有世界平面裁剪，不额外上传重复主体或自动封口。每次烘焙按状态与规范化可见数据复用局部网格，缓存不跨文档或资源代际；模板缓存和特殊输出分别受内部预算约束，超限抛出 `InvalidDataException`，取消继续抛出 `OperationCanceledException`。公开 API、Native ABI 和旧 P/Invoke 保持不变。
+
+贡献状态包括 `Resolved`、`StaticLimited`、`KnownEmpty`、`DisabledByPolicy`、`UnknownData`、`ResourceFailure`、`Unsupported`。内部计划保留每项需求、状态、证据和源身份；公开诊断聚合未满足需求及静态限制，正常完成、已知空和默认关闭的调试贡献不逐条发出警告。普通底座成功且附加内容缺失为 `Partial`，保留底座；没有可用主体时继续占位。真实损坏覆盖仍报告资源错误，不借专用路径隐藏。`Full` 仅指本次已声明贡献全部满足，明确空的内容可满足其条件；它不代表全部游戏效果或动画已经支持。
+
+资源 Profile 由实际打开的客户端归档 SHA256 匹配封闭的原版身份登记，显示标签、目录名及资源包不能替代客户端身份。文档的原始 `DataVersion` 单独选择数据适配器；未识别的源版本保留 payload 并报告数据未知，不自动使用相近版本。当前适配包括部分旧/新牌文字、有序旗帜图案、物品槽和组件、头部外观记录、陶罐饰片与床颜色；完整字体、物品/实体显示、部件几何、外部皮肤解析和新数据 codec 尚未实现。
+
+普通 JSON 和基础流体使用原有烘焙流程。计划按源方块建立，附加贡献不增加材料或切片源块数量。切包创建新资源代际并重新生成计划；计划不以 Palette state 缓存各位置的外观。计划预算为 256 MiB 估算，超限抛出 `InvalidDataException`，不作为某个方块未支持继续执行。场景内存估算包含计划。原有 session 串行调度、取消并等待后释放的线程契约继续适用。
 
 纹理在 Windows x64 的 WIC 路径校验，并按 `.png.mcmeta` 动画尺寸和首个帧序索引静态取帧；无动画元数据的非正方形纹理保留尺寸。单张解码纹理上限为 16M 像素、任一边 16384；超限抛出 `InvalidDataException`，内存不足仍传播，不伪装成缺失材质。加载和烘焙也需要配套 Native DLL，但不要求先连接视口。内部成对初始化/释放线程 COM，支持后台加载；旧 Native DLL 不可与新增图像解码入口的托管程序集混用。
 

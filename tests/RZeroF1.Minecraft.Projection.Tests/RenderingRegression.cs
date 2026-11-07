@@ -76,17 +76,17 @@ internal static class RenderingRegression
         var baker = new ProjectionModelBaker(resources);
         var stone = Doc(("stone", 0, 0, 0));
         var missing = baker.Build(Doc(("absent", 0, 0, 0), ("absent", 2, 0, 0)));
-        Check(missing.TriangleCount == 24 && missing.Diagnostics.Single().Count == 2 && missing.Diagnostics.Single().Positions.Count == 2, "one placeholder per failed block; grouped diagnostics retain counts/coordinates");
+        Check(missing.TriangleCount == 24 && missing.Diagnostics.Single(diagnostic => !diagnostic.Reason.StartsWith("Capability.", StringComparison.Ordinal)).Count == 2 && missing.Diagnostics.Single(diagnostic => !diagnostic.Reason.StartsWith("Capability.", StringComparison.Ordinal)).Positions.Count == 2, "one placeholder per failed block; grouped diagnostics retain counts/coordinates");
         Check(missing.TexturePng.Values.All(p => p is { Length: > 0 }), "fallback always supplies valid PNG bytes");
         foreach (var state in new[] { "air", "cave_air", "void_air", "barrier", "light", "structure_void" })
             Check(baker.Build(Doc((state, 0, 0, 0))).TriangleCount == 0, "intentional invisibility: " + state);
-        Check(baker.Build(Doc(("chest", 0, 0, 0))).Diagnostics.Single().Reason == "UnsupportedRenderer", "unsupported entity classified separately");
-        Check(baker.Build(Doc(("custom_empty", 0, 0, 0))).Diagnostics.Single().Reason == "EmptyModelUnknownIntent", "unknown empty model not mislabeled invisible/supported");
+        Check(baker.Build(Doc(("chest", 0, 0, 0))).Diagnostics.Single(diagnostic => !diagnostic.Reason.StartsWith("Capability.", StringComparison.Ordinal)).Reason == "UnsupportedRenderer", "unsupported entity classified separately");
+        Check(baker.Build(Doc(("custom_empty", 0, 0, 0))).Diagnostics.Single(diagnostic => !diagnostic.Reason.StartsWith("Capability.", StringComparison.Ordinal)).Reason == "EmptyModelUnknownIntent", "unknown empty model not mislabeled invisible/supported");
         var corrupt = baker.Build(Doc(("bad", 0, 0, 0)));
-        Check(corrupt.TriangleCount == 12 && corrupt.Diagnostics.Single().Reason == "TextureDecodeFailure", "corrupt image becomes diagnostic cube");
+        Check(corrupt.TriangleCount == 12 && corrupt.Diagnostics.Single(diagnostic => !diagnostic.Reason.StartsWith("Capability.", StringComparison.Ordinal)).Reason == "TextureDecodeFailure", "corrupt image becomes diagnostic cube");
         var hidden = baker.Build(Doc(("stone", 0, 0, 0), ("chest", 1, 0, 0)));
         Check(hidden.TriangleCount == 22, "fallback is not a trusted occluder");
-        Check(baker.Build(Doc(("missing_parent",0,0,0))).Diagnostics.Single().Reason == "MissingModelOrParent", "missing parent classified");
+        Check(baker.Build(Doc(("missing_parent",0,0,0))).Diagnostics.Single(diagnostic => !diagnostic.Reason.StartsWith("Capability.", StringComparison.Ordinal)).Reason == "MissingModelOrParent", "missing parent classified");
         Check(baker.Build(Doc(("no_cull",0,0,0),("stone",1,0,0))).TriangleCount == 22, "full geometry without Cullface keeps own internal face");
         foreach (var small in new[] {"lever","wheat","candle","farmland"})
             Check(baker.Build(Doc(("stone",0,0,0),(small,0,1,0))).TriangleCount == 24, "partial geometry cannot erase floor: " + small);
@@ -119,7 +119,7 @@ internal static class RenderingRegression
             var isolated = Doc(($"{pane}[north=false,east=false,south=false,west=false]",0,0,0));
             Check(faithfulBaker.Build(isolated).TriangleCount == 12, "explicit false retains isolated panes");
             var filtered = previewBaker.Build(isolated);
-            Check(filtered.TriangleCount == 0 && filtered.Diagnostics.Single().Reason == "PreviewFilteredIsolatedGlassPane", "default filter reports hidden geometry");
+            Check(filtered.TriangleCount == 0 && filtered.Diagnostics.Single(diagnostic => !diagnostic.Reason.StartsWith("Capability.", StringComparison.Ordinal)).Reason == "PreviewFilteredIsolatedGlassPane", "default filter reports hidden geometry");
             Check(isolated.Blocks.Count == 1 && new ProjectionSliceIndex(isolated).GroupMaterials().Single().Count == 1, "filter preserves source/material counts");
             var connected = Doc(($"{pane}[north=false,east=true,south=false,west=false]",0,0,0));
             Check(previewBaker.Build(connected).TriangleCount == 12, "connected pane retained");

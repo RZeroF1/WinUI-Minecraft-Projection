@@ -155,6 +155,10 @@ try
         DecodeSingleRowPng(rawPng) is [0, 255, 0, 0, 255, 0, 255, 0, 255],
         "PNG dimensions, zlib scanline, and BGRA-to-RGBA channel order");
     RenderingRegression.Run(root);
+    CapabilityRegression.Run(root);
+    await P1DataRegression.RunAsync(root);
+    P1PlanRegression.Run(root);
+    P2GeometryRegression.Run(root);
     Console.WriteLine("PASS litematic/schem read, resource-pack texture/localization, materials, slices, camera, PNG encoding and disposal");
 }
 finally

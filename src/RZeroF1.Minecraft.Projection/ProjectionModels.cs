@@ -76,6 +76,8 @@ public sealed record ProjectionRegionInfo(
 
 public sealed class ProjectionDocument
 {
+    internal Guid Identity { get; } = Guid.NewGuid();
+    internal ProjectionBlockEntityStore BlockEntities { get; init; } = ProjectionBlockEntityStore.Empty;
     public required string Name { get; init; }
     public required string SourcePath { get; init; }
     public required ProjectionFormat Format { get; init; }
@@ -105,7 +107,7 @@ public sealed class ProjectionDocument
                 state.Key.Length * 2L +
                 state.Properties.Sum(pair => (pair.Key.Length + pair.Value.Length) * 2L + 32L));
             var regionBytes = Regions.Count * 128L;
-            return blockBytes + paletteBytes + regionBytes;
+            return blockBytes + paletteBytes + regionBytes + BlockEntities.EstimatedCpuBytes;
         }
     }
 }
@@ -114,7 +116,13 @@ internal sealed record ProjectionLoadOptions(
     long MaxCompressedBytes = 256 * 1024 * 1024,
     long MaxDecompressedBytes = 512 * 1024 * 1024,
     long MaxVolume = 50_000_000,
-    int MaxRegions = 64);
+    int MaxRegions = 64,
+    int MaxBlockEntities = 250_000,
+    long MaxBlockEntityBytes = 64L * 1024 * 1024,
+    long MaxBlockEntityRecordBytes = 1024 * 1024,
+    int MaxNbtDepth = 64,
+    int MaxNbtNodes = 4_000_000,
+    long MaxNbtAllocatedBytes = 512L * 1024 * 1024);
 
 public sealed record ProjectionLoadProgress(
     string Stage,
