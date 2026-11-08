@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Collections.Frozen;
 
 namespace RZeroF1.Minecraft.Projection;
 
@@ -11,10 +12,9 @@ internal static class ProjectionSpecialModelProducer
         cancellationToken.ThrowIfCancellationRequested();
         if (input.Declaration.Status != ProjectionDeclarationStatus.Known)
             return ProjectionSpecialModelResult.Unsupported("UnknownSpecialModelProfile");
-        var client = input.Profile.Client.Version!.Id;
-        if (client is not ("1.19.2" or "26.2" or "26.3") &&
-            !(client == "1.14.4" && input.Declaration.Recipe == "ChestRenderer"))
-            return ProjectionSpecialModelResult.Unsupported("P2GeometryEndpointNotVerified");
+        var mechanism = ProjectionSpecialModelCompatibility.Select(input.Profile.Client, input.Declaration.Recipe);
+        if (mechanism is null)
+            return ProjectionSpecialModelResult.Unsupported("SpecialModelMechanismNotAudited");
         if (input.Declaration.Recipe is "ChestRenderer" or "ShulkerBoxRenderer" or "BedRenderer" or
             "LecternRenderer" or "DecoratedPotRenderer" or "CopperGolemStatueBlockRenderer")
         {
@@ -23,23 +23,29 @@ internal static class ProjectionSpecialModelProducer
                 input.Declaration.Recipe == "ShulkerBoxRenderer" && facing is "up" or "down";
             if (!valid) return DataUnknown("MissingOrInvalidFacing");
         }
-        return input.Declaration.Recipe switch
+        var result = input.Declaration.Recipe switch
         {
-            "ChestRenderer" => Chest(state, input, resources, cancellationToken),
+            "ChestRenderer" => Chest(state, mechanism, resources, cancellationToken),
             "ShulkerBoxRenderer" => Shulker(state, resources, cancellationToken),
-            "BedRenderer" => Bed(state, input, resources, cancellationToken),
+            "BedRenderer" => Bed(state, input, mechanism, resources, cancellationToken),
             "BellRenderer" => Bell(resources, cancellationToken),
-            "EnchantTableRenderer" => Book(state, input, resources, cancellationToken),
-            "LecternRenderer" when state.Properties.GetValueOrDefault("has_book") == "true" => Book(state, input, resources, cancellationToken),
+            "EnchantTableRenderer" => Book(state, input, mechanism, resources, cancellationToken),
+            "LecternRenderer" when state.Properties.GetValueOrDefault("has_book") == "true" => Book(state, input, mechanism, resources, cancellationToken),
             "LecternRenderer" when state.Properties.GetValueOrDefault("has_book") == "false" => EmptyBook(),
             "LecternRenderer" => DataUnknown("MissingHasBookState"),
             "DecoratedPotRenderer" => Pot(state, resources, cancellationToken),
-            "CopperGolemStatueBlockRenderer" => Statue(state, input, resources, cancellationToken),
+            "CopperGolemStatueBlockRenderer" => Statue(state, input, mechanism, resources, cancellationToken),
             _ => ProjectionSpecialModelResult.Unsupported("NoP2SpecialModelRecipe")
+        };
+        return result with
+        {
+            Contributions = result.Contributions.ToFrozenDictionary(pair => pair.Key,
+                pair => pair.Value.State is ProjectionContributionState.Resolved or ProjectionContributionState.StaticLimited or ProjectionContributionState.KnownEmpty
+                    ? pair.Value with { Evidence = "Mechanism=" + mechanism.Id + "; " + pair.Value.Evidence } : pair.Value)
         };
     }
 
-    private static ProjectionSpecialModelResult Chest(ProjectionState state, ProjectionRenderPlanInput input,
+    private static ProjectionSpecialModelResult Chest(ProjectionState state, ProjectionSpecialModelProfile mechanism,
         ProjectionResourceSet resources, CancellationToken ct)
     {
         var family = state.Name switch
@@ -52,10 +58,8 @@ internal static class ProjectionSpecialModelProducer
         if (family is null) return ProjectionSpecialModelResult.Unsupported("ChestMaterialVariantNotInP2");
         var type = family == "ender" ? "single" : state.Properties.GetValueOrDefault("type");
         if (type is not ("single" or "left" or "right")) return DataUnknown("InvalidChestType");
-        var layout = input.Profile.Client.Version!.Profile.Chest;
-        if (layout == "Legacy") return ProjectionSpecialModelResult.Unsupported("LegacyChestGeometryProfile");
-        var legacy = layout == "Double128";
-        var modern = input.Profile.Client.Version.Id is "26.1" or "26.1.2" or "26.2" or "26.3" or "26.4-snapshot-6";
+        var legacy = mechanism.Geometry == ProjectionSpecialGeometry.ChestDouble128;
+        var modern = mechanism.Geometry == ProjectionSpecialGeometry.ChestSplitHiddenSeam;
         var textureSuffix = type == "single" ? "" : legacy ? "_double" : "_" + type;
         var width = legacy && type != "single" ? 128 : 64;
         var material = Texture(resources, $"minecraft:entity/chest/{family}{textureSuffix}", width, 64, ct);
@@ -112,6 +116,7 @@ internal static class ProjectionSpecialModelProducer
     }
 
     private static ProjectionSpecialModelResult Bed(ProjectionState state, ProjectionRenderPlanInput input,
+        ProjectionSpecialModelProfile mechanism,
         ProjectionResourceSet resources, CancellationToken ct)
     {
         if (input.Profile.Client.Version!.Profile.Bed == "BlockModel")
@@ -128,7 +133,17 @@ internal static class ProjectionSpecialModelProducer
             Matrix4x4.CreateRotationZ(MathF.PI + YRotation(state.Properties.GetValueOrDefault("facing", "north"))) *
             Matrix4x4.CreateTranslation(.5f, .5f, .5f) * Matrix4x4.CreateRotationX(MathF.PI / 2) *
             Matrix4x4.CreateTranslation(0, 9 / 16f, 0);
-        return Result(Bake(part == "head" ? ProjectionPartRecipes.BedHead : ProjectionPartRecipes.BedFoot, material.Value, root, ct),
+        var visibleFaces = mechanism.Geometry == ProjectionSpecialGeometry.EntityBedVisibleFaces;
+        var graph = (part, visibleFaces) switch
+        {
+            ("head", true) => ProjectionPartRecipes.BedHeadVisibleFaces,
+            ("foot", true) => ProjectionPartRecipes.BedFootVisibleFaces,
+            ("head", false) => ProjectionPartRecipes.BedHead,
+            ("foot", false) => ProjectionPartRecipes.BedFoot,
+            _ => null
+        };
+        if (graph is null) return DataUnknown("InvalidBedPart");
+        return Result(Bake(graph, material.Value, root, ct),
             "Audited entity bed half, mattress and two rotated legs; source color DTO independent of resource profile",
             animation: false, state: ProjectionContributionState.Resolved);
     }
@@ -142,9 +157,10 @@ internal static class ProjectionSpecialModelProducer
     }
 
     private static ProjectionSpecialModelResult Book(ProjectionState state, ProjectionRenderPlanInput input,
+        ProjectionSpecialModelProfile mechanism,
         ProjectionResourceSet resources, CancellationToken ct)
     {
-        var modern = input.Profile.Client.Version!.Id.StartsWith("26.", StringComparison.Ordinal);
+        var modern = mechanism.Resources == ProjectionSpecialResources.BookEnchantment;
         var material = Texture(resources, modern ? "minecraft:entity/enchantment/enchanting_table_book" : "minecraft:entity/enchanting_table_book", 64, 32, ct);
         if (material.Failure is not null) return Failure(material.Failure);
         // Canonical state: time=0, spread input=1, pageFlip1=.1, pageFlip2=.9.
@@ -165,7 +181,8 @@ internal static class ProjectionSpecialModelProducer
             ? Matrix4x4.CreateTranslation(0, -.125f, 0) * Matrix4x4.CreateRotationZ(67.5f * MathF.PI / 180) *
                 Matrix4x4.CreateRotationY(angle) * Matrix4x4.CreateTranslation(.5f, 1.0625f, .5f)
             : Matrix4x4.CreateRotationZ(80 * MathF.PI / 180) * Matrix4x4.CreateTranslation(.5f, .85f, .5f);
-        return Result(ProjectionSpecialMeshBuilder.Bake(ProjectionPartRecipes.Book, ProjectionPose.Identity, ct,
+        var graph = mechanism.Geometry == ProjectionSpecialGeometry.BookPlanar ? ProjectionPartRecipes.BookPlanar : ProjectionPartRecipes.Book;
+        return Result(ProjectionSpecialMeshBuilder.Bake(graph, ProjectionPose.Identity, ct,
             new Dictionary<string, ProjectionMaterialRequest> { ["base"] = material.Value }, poses, root),
             "Shared seven-part BookModel; canonical spread/page poses; runtime animation unavailable", true);
     }
@@ -194,10 +211,9 @@ internal static class ProjectionSpecialModelProducer
     }
 
     private static ProjectionSpecialModelResult Statue(ProjectionState state, ProjectionRenderPlanInput input,
+        ProjectionSpecialModelProfile mechanism,
         ProjectionResourceSet resources, CancellationToken ct)
     {
-        if (input.Profile.Client.Version!.Id is not ("26.1" or "26.1.2" or "26.2" or "26.3" or "26.4-snapshot-6"))
-            return ProjectionSpecialModelResult.Unsupported("StatueGeometryProfileNotVerified");
         var pose = state.Properties.GetValueOrDefault("pose");
         var graph = pose switch
         {
@@ -214,7 +230,10 @@ internal static class ProjectionSpecialModelProducer
             state.Name.Contains("exposed", StringComparison.Ordinal) ? "exposed" : "unaffected";
         var suffix = oxidation switch { "unaffected" => "", "exposed" => "_exposed", "weathered" => "_weathered", "oxidized" => "_oxidized", _ => null };
         if (suffix is null) return DataUnknown("UnknownStatueOxidation");
-        var material = Texture(resources, "minecraft:entity/copper_golem/copper_golem" + suffix, 64, 64, ct);
+        var texturePrefix = mechanism.Resources == ProjectionSpecialResources.CopperGolem64Legacy
+            ? oxidation == "unaffected" ? "copper_golem" : oxidation + "_copper_golem"
+            : "copper_golem" + suffix;
+        var material = Texture(resources, "minecraft:entity/copper_golem/" + texturePrefix, 64, 64, ct);
         if (material.Failure is not null) return Failure(material.Failure);
         var root = Matrix4x4.CreateRotationZ(MathF.PI) *
             Matrix4x4.CreateRotationY(-YRotation(Opposite(state.Properties.GetValueOrDefault("facing", "north")))) *

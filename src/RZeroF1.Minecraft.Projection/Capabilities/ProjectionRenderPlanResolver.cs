@@ -39,6 +39,9 @@ internal static class ProjectionRenderPlanResolver
         document.BlockEntities.TryGet(block, out var payload);
         var binding = ProjectionBlockEntityBindings.Bind(state, payload, document.DataVersion);
         var type = ProjectionBlockEntityBindings.TypeForBlock(state.Name) ?? binding.TypeId;
+        if (type == "minecraft:trapped_chest" && profile.Client.Version?.Profile.Routing == "LegacyClass" &&
+            ProjectionSpecialModelCompatibility.Select(profile.Client, "ChestRenderer") is not null)
+            type = "minecraft:chest";
         // Bed BE routing itself disappeared at the audited BlockModel endpoints.
         // This decision belongs to the resource profile, independently of source NBT.
         if (type == "minecraft:bed" && profile.Client.Version?.Profile.Bed == "BlockModel") type = null;

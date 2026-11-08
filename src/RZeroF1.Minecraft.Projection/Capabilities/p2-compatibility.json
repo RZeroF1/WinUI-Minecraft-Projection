@@ -1,0 +1,319 @@
+{
+  "schema": 1,
+  "evidenceId": "p2-cross-version-mechanisms-2026-11-08",
+  "groups": [
+    {
+      "id": "chest.double128.closed",
+      "recipes": [
+        "ChestRenderer"
+      ],
+      "geometry": "ChestDouble128",
+      "resources": "ChestDouble128",
+      "material": "StaticCutout",
+      "versions": [
+        "1.11",
+        "1.11.2",
+        "1.12",
+        "1.12.2",
+        "1.13",
+        "1.13.2",
+        "1.14",
+        "1.14.4"
+      ],
+      "evidenceSha256": "53b4dcf0978a9d2d5b2c2863bbb7040cc8ff8e45ed0fa6cb2668c6474e836595"
+    },
+    {
+      "id": "chest.split64.closed",
+      "recipes": [
+        "ChestRenderer"
+      ],
+      "geometry": "ChestSplit",
+      "resources": "ChestSplit64",
+      "material": "StaticCutout",
+      "versions": [
+        "1.15",
+        "1.15.2",
+        "1.16",
+        "1.16.1",
+        "1.16.5",
+        "1.17",
+        "1.17.1",
+        "1.18",
+        "1.18.2",
+        "1.19",
+        "1.19.2",
+        "1.19.4",
+        "1.20",
+        "1.20.6",
+        "1.21",
+        "1.21.1",
+        "1.21.3",
+        "1.21.4",
+        "1.21.5",
+        "1.21.11"
+      ],
+      "evidenceSha256": "952e125c036f6490ef1caca2472e5d7985187c8e073573e7597b6ea3f7499003"
+    },
+    {
+      "id": "chest.split64.hidden-seam",
+      "recipes": [
+        "ChestRenderer"
+      ],
+      "geometry": "ChestSplitHiddenSeam",
+      "resources": "ChestSplit64",
+      "material": "StaticCutout",
+      "versions": [
+        "26.1",
+        "26.1.2",
+        "26.2",
+        "26.3",
+        "26.4-snapshot-6"
+      ],
+      "evidenceSha256": "3556f47022fbb83fbc6bed1e1f52807d17bcb80b5e74edbbb80cf7e9835e165a"
+    },
+    {
+      "id": "shulker.closed-shell",
+      "recipes": [
+        "ShulkerBoxRenderer"
+      ],
+      "geometry": "ShulkerShell",
+      "resources": "Shulker64",
+      "material": "StaticCutout",
+      "versions": [
+        "1.14.4",
+        "1.15",
+        "1.15.2",
+        "1.16",
+        "1.16.1",
+        "1.16.5",
+        "1.17",
+        "1.17.1",
+        "1.18",
+        "1.18.2",
+        "1.19",
+        "1.19.2",
+        "1.19.4",
+        "1.20",
+        "1.20.6",
+        "1.21",
+        "1.21.1",
+        "1.21.3",
+        "1.21.4",
+        "1.21.5",
+        "1.21.11",
+        "26.1",
+        "26.1.2",
+        "26.2",
+        "26.3",
+        "26.4-snapshot-6"
+      ],
+      "evidenceSha256": "3d56ba0d15fd1c8488eb3b0bc552bdbd773b9fa1839d2fb0f311387a198a49ad"
+    },
+    {
+      "id": "bed.entity.full-faces",
+      "recipes": [
+        "BedRenderer"
+      ],
+      "geometry": "EntityBed",
+      "resources": "BedColorId",
+      "material": "StaticCutout",
+      "versions": [
+        "1.14.4",
+        "1.15",
+        "1.15.2",
+        "1.16",
+        "1.16.1",
+        "1.16.5",
+        "1.17",
+        "1.17.1",
+        "1.18",
+        "1.18.2",
+        "1.19",
+        "1.19.2",
+        "1.19.4",
+        "1.20",
+        "1.20.6",
+        "1.21",
+        "1.21.1",
+        "1.21.3",
+        "1.21.4",
+        "1.21.5",
+        "1.21.11"
+      ],
+      "evidenceSha256": "d270a58209018174cd446adec8a605f7493ef9e5909a4a7216db39af4ecf976e"
+    },
+    {
+      "id": "bed.entity.visible-faces",
+      "recipes": [
+        "BedRenderer"
+      ],
+      "geometry": "EntityBedVisibleFaces",
+      "resources": "BedColorId",
+      "material": "StaticCutout",
+      "versions": [
+        "26.1",
+        "26.1.2"
+      ],
+      "evidenceSha256": "b9fbf79c2e5a1f89471c18e553aeb3cb00c72b0b0bcafbc8e5bbba2e34a5c9da"
+    },
+    {
+      "id": "bell.body",
+      "recipes": [
+        "BellRenderer"
+      ],
+      "geometry": "BellBody",
+      "resources": "Bell32",
+      "material": "StaticCutout",
+      "versions": [
+        "1.14.4",
+        "1.15",
+        "1.15.2",
+        "1.16",
+        "1.16.1",
+        "1.16.5",
+        "1.17",
+        "1.17.1",
+        "1.18",
+        "1.18.2",
+        "1.19",
+        "1.19.2",
+        "1.19.4",
+        "1.20",
+        "1.20.6",
+        "1.21",
+        "1.21.1",
+        "1.21.3",
+        "1.21.4",
+        "1.21.5",
+        "1.21.11",
+        "26.1",
+        "26.1.2",
+        "26.2",
+        "26.3",
+        "26.4-snapshot-6"
+      ],
+      "evidenceSha256": "2ede36678946e18968199b7071a08c210e75584b3272b0e16819a99714b574cf"
+    },
+    {
+      "id": "book.planar.legacy-path",
+      "recipes": [
+        "EnchantTableRenderer",
+        "LecternRenderer"
+      ],
+      "geometry": "BookPlanar",
+      "resources": "BookLegacy",
+      "material": "StaticCutout",
+      "versions": [
+        "1.14.4"
+      ],
+      "evidenceSha256": "558088ef92fd5853f42d17dab7cf8de9f8c61d98a7718890e6eef1934e582d0f"
+    },
+    {
+      "id": "book.thin.legacy-path",
+      "recipes": [
+        "EnchantTableRenderer",
+        "LecternRenderer"
+      ],
+      "geometry": "BookThin",
+      "resources": "BookLegacy",
+      "material": "StaticCutout",
+      "versions": [
+        "1.15",
+        "1.15.2",
+        "1.16",
+        "1.16.1",
+        "1.16.5",
+        "1.17",
+        "1.17.1",
+        "1.18",
+        "1.18.2",
+        "1.19",
+        "1.19.2",
+        "1.19.4",
+        "1.20",
+        "1.20.6",
+        "1.21",
+        "1.21.1",
+        "1.21.3",
+        "1.21.4",
+        "1.21.5",
+        "1.21.11"
+      ],
+      "evidenceSha256": "8f6ad760e5585ea520a36e4f879550daef74c7098976520a2138939dde63f72c"
+    },
+    {
+      "id": "book.thin.enchantment-path",
+      "recipes": [
+        "EnchantTableRenderer",
+        "LecternRenderer"
+      ],
+      "geometry": "BookThin",
+      "resources": "BookEnchantment",
+      "material": "StaticCutout",
+      "versions": [
+        "26.1",
+        "26.1.2",
+        "26.2",
+        "26.3",
+        "26.4-snapshot-6"
+      ],
+      "evidenceSha256": "208ea69c736bcc1b37d13ddb6058dd97400d9c32ca7c89337063cbbc46c50c5f"
+    },
+    {
+      "id": "pot.base",
+      "recipes": [
+        "DecoratedPotRenderer"
+      ],
+      "geometry": "PotBase",
+      "resources": "PotBase32Side16",
+      "material": "StaticCutout",
+      "versions": [
+        "1.19.4",
+        "1.20",
+        "1.20.6",
+        "1.21",
+        "1.21.1",
+        "1.21.3",
+        "1.21.4",
+        "1.21.5",
+        "1.21.11",
+        "26.1",
+        "26.1.2",
+        "26.2",
+        "26.3",
+        "26.4-snapshot-6"
+      ],
+      "evidenceSha256": "eb1a2aa6bff50860022b7b7615dbd4e845264a6fa0098e03ec0d671bbea188dd"
+    },
+    {
+      "id": "statue.four-poses.legacy-resource",
+      "recipes": [
+        "CopperGolemStatueBlockRenderer"
+      ],
+      "geometry": "StatuePoses",
+      "resources": "CopperGolem64Legacy",
+      "material": "StaticCutout",
+      "versions": [
+        "1.21.11"
+      ],
+      "evidenceSha256": "0e430a2c2525b84634d1eb21a0cd3c0b9abb7f3de37716d6f8c5584801bb9a66"
+    },
+    {
+      "id": "statue.four-poses.modern-resource",
+      "recipes": [
+        "CopperGolemStatueBlockRenderer"
+      ],
+      "geometry": "StatuePoses",
+      "resources": "CopperGolem64Modern",
+      "material": "StaticCutout",
+      "versions": [
+        "26.1",
+        "26.1.2",
+        "26.2",
+        "26.3",
+        "26.4-snapshot-6"
+      ],
+      "evidenceSha256": "9d32e86e3876bc155037d0ef0d2a1cc272bdb986b1ba0a2c731631f6f45a2976"
+    }
+  ]
+}

@@ -6,6 +6,20 @@ namespace RZeroF1.Minecraft.Projection;
 // Immutable templates contain logical material slots; resources and instance poses are bound at bake time.
 internal static class ProjectionPartRecipes
 {
+    private static ProjectionPartGraph VisibleBedFaces(ProjectionPartGraph graph, bool head)
+    {
+        ProjectionPartNode Map(ProjectionPartNode node) => node with
+        {
+            Cuboids = node.Cuboids.Select(cube => cube with
+            {
+                Faces = Enum.GetValues<ProjectionFaceDirection>().Where(face =>
+                    face != (node.Name == "main" && head ? ProjectionFaceDirection.Up : ProjectionFaceDirection.Down)).ToHashSet()
+            }).ToArray(),
+            Children = node.Children.Select(Map).ToArray()
+        };
+        return new(graph.Name + "VisibleFaces", Map(graph.Root));
+    }
+
     internal static readonly ProjectionPartGraph ChestSingle = new("ChestSingle", P("root", new(0, 0, 0), new(0, 0, 0),
         [],
         [P("bottom", new(0, 0, 0), new(0, 0, 0),
@@ -280,6 +294,22 @@ P("left_leg", new(1, -5, 0), new(0, 0, 0),
             [P("left_leg_r1", new(1.65f, 2, 0), new(0, 0, -0.2618f),
                 [C(new(-2, -2.5f, -2), new(4, 5, 4), new(16, 27), "base", 64, 64, 0, false)],
                 [])])]));
+    internal static readonly ProjectionPartGraph BedHeadVisibleFaces = VisibleBedFaces(BedHead, true);
+    internal static readonly ProjectionPartGraph BedFootVisibleFaces = VisibleBedFaces(BedFoot, false);
+    internal static readonly ProjectionPartGraph BookPlanar = PlanarBook();
+
+    private static ProjectionPartGraph PlanarBook()
+    {
+        ProjectionPartNode Map(ProjectionPartNode node) => node with
+        {
+            Cuboids = node.Cuboids.Select(cube => node.Name is "left_lid" or "right_lid" or "seam" or "flip_page1" or "flip_page2"
+                ? cube with { From = cube.From with { Z = 0 }, To = cube.To with { Z = 0 },
+                    UvSize = cube.UvSize!.Value with { Z = 0 } } : cube).ToArray(),
+            Children = node.Children.Select(Map).ToArray()
+        };
+        return new("BookPlanar", Map(Book.Root));
+    }
+
     private static ProjectionPartNode P(string name, Vector3 offset, Vector3 rotation,
         ProjectionCuboid[] cubes, ProjectionPartNode[] children) =>
         new(name, new(Vector3.Zero, rotation, offset / 16, Vector3.One, false, false, false), cubes, [], children);

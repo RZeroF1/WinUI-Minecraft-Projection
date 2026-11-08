@@ -73,7 +73,7 @@ internal sealed class ProjectionRenderCapabilityRegistry
                 ? ProjectionDeclarationStatus.IdentityMismatch : ProjectionDeclarationStatus.UnknownVersion);
         if (blockEntityTypeId is not null)
         {
-            if (version.Registrations.TryGetValue(blockEntityTypeId, out var registration))
+            if (TryGetRegistration(version, blockEntityTypeId, out var registration))
                 return new(ProjectionDeclarationStatus.Known, version.Id, blockEntityTypeId, registration.Recipe,
                     registration.Family, ProjectionCapabilityRecipes.Requirements(registration.Recipe,
                         version.Profile.Boards == "BlockModel", version.Profile.Bed == "ColorNbt"));
@@ -89,6 +89,25 @@ internal sealed class ProjectionRenderCapabilityRegistry
         if (version.Profile.Resources == "TerrainAtlas" && renderPath == ProjectionRenderPath.Model)
             return Unclassified(ProjectionDeclarationStatus.UnknownRenderPath);
         return Unclassified(ProjectionDeclarationStatus.Known);
+    }
+
+    private static bool TryGetRegistration(ProjectionVanillaRenderVersion version, string typeId,
+        out ProjectionRendererRegistration registration)
+    {
+        if (version.Registrations.TryGetValue(typeId, out registration!)) return true;
+        // Audited class inheritance: TrappedChestBlockEntity extends ChestBlockEntity;
+        // the 1.14.4 dispatcher walks superclasses. This is an inherited lookup,
+        // not an extra registration and not a rule for other class-key endpoints.
+        if (version.Id == "1.14.4" && typeId == "minecraft:trapped_chest" &&
+            version.BlockEntityTypes?.Contains(typeId) == true &&
+            version.Registrations.TryGetValue("minecraft:chest", out registration!)) return true;
+        // These exact LegacyClass endpoints register one ChestRenderer for normal
+        // and trapped chest block states, but their old type census is unavailable.
+        // Admit only the numerically audited Double128 endpoints.
+        if (typeId == "minecraft:trapped_chest" && version.Id is
+            "1.11" or "1.11.2" or "1.12" or "1.12.2" or "1.13" or "1.13.2" or "1.14" &&
+            version.Registrations.TryGetValue("minecraft:chest", out registration!)) return true;
+        return false;
     }
 
     private static ProjectionRenderCapabilityRegistry Load()

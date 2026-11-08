@@ -154,7 +154,21 @@ internal static class P1DataRegression
         Check(Adapt("{color:8}", 1343, "bed").BedColor.Value == "light_gray", "1.12 BE bed color");
         Check(Adapt("{}", 3120, "red_bed").BedColor.Value == "red", "flattened source bed color");
         Check(Adapt("{color:999}", 1343, "bed").BedColor.Status == ProjectionVisualDataStatus.Invalid, "invalid bed color");
-        Check(Adapt("{sherds:['minecraft:brick','minecraft:brick','minecraft:brick','minecraft:brick']}", 5023, "decorated_pot").PotSides.Value!.Count == 4, "pot sides ordered");
+        var fullPot = Adapt("{sherds:['minecraft:brick','minecraft:brick','minecraft:brick','minecraft:brick']}", 4903, "decorated_pot");
+        Check(fullPot.PotSides is { Status: ProjectionVisualDataStatus.Known, Value: { } sides } &&
+            sides.SequenceEqual(["minecraft:brick", "minecraft:brick", "minecraft:brick", "minecraft:brick"]), "pot sides ordered");
+        var shortPot = Adapt("{sherds:['minecraft:blue_glazed_terracotta','minecraft:brick']}", 4903, "decorated_pot");
+        Check(shortPot.PotSides is { Status: ProjectionVisualDataStatus.Known, Value: { } shortSides } &&
+            shortSides.SequenceEqual(["minecraft:blue_glazed_terracotta", "minecraft:brick", "minecraft:brick", "minecraft:brick"]),
+            "legal short sherds list pads trailing default sides");
+        var emptyPot = Adapt("{sherds:[]}", 4903, "decorated_pot");
+        Check(emptyPot.PotSides is { Status: ProjectionVisualDataStatus.Known, Value: { } emptySides } &&
+            emptySides.SequenceEqual(["minecraft:brick", "minecraft:brick", "minecraft:brick", "minecraft:brick"]),
+            "legal empty sherds list pads all default sides");
+        Check(Adapt("{shards:['minecraft:brick']}", 3337, "decorated_pot").PotSides is
+            { Status: ProjectionVisualDataStatus.Known, Value.Count: 4 }, "legacy shards list uses the same default padding");
+        Check(Adapt("{sherds:['minecraft:brick']}", 5023, "decorated_pot").PotSides.Status == ProjectionVisualDataStatus.Unknown,
+            "named pot templates do not accept the legacy sherds list");
         Check(Adapt("{SpawnData:{entity:{id:'minecraft:pig'}}}", 3120, "spawner").DisplayEntity.Value!.Id == "minecraft:pig", "modern entity display DTO");
         Check(Adapt("{SpawnData:{id:'minecraft:pig'}}", 1343, "spawner").DisplayEntity.Value!.Id == "minecraft:pig", "old SpawnData normalized to same DTO");
         Check(Adapt("{SpawnData:{}}", 3120, "spawner").DisplayEntity.Status == ProjectionVisualDataStatus.Unknown, "empty SpawnData is unknown, not known empty");

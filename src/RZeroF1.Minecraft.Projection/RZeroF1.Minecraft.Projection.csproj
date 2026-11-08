@@ -34,6 +34,9 @@
     <EmbeddedResource Include="Capabilities\vanilla-capabilities.json"
                       LogicalName="RZeroF1.Minecraft.Projection.vanilla-capabilities.json" />
     <None Update="Capabilities\vanilla-capabilities.json" Pack="false" />
+    <EmbeddedResource Include="Capabilities\p2-compatibility.json"
+                      LogicalName="RZeroF1.Minecraft.Projection.p2-compatibility.json" />
+    <None Update="Capabilities\p2-compatibility.json" Pack="false" />
   </ItemGroup>
 
   <ItemGroup>

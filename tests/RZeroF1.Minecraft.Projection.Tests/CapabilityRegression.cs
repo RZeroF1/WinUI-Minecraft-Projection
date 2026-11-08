@@ -59,8 +59,11 @@ internal static class CapabilityRegression
         Check(Declare("1.19.2", "sign").Requirements.Any(r => r.Kind == K.SpecialModel), "old sign board parts");
         Check(Declare("26.2", "sign").Requirements.Select(r => r.Kind).SequenceEqual([K.BlockModel, K.Text]), "modern sign still needs text");
         Check(Registry.Versions["1.14.4"].Profile.Chest == "Double128" && Registry.Versions["1.15"].Profile.Chest == "Split64", "chest UV profile boundary");
-        Check(Declare("1.14.4", "trapped_chest", ProjectionRenderPath.Model).Status == ProjectionDeclarationStatus.UnknownRenderPath,
-            "unjoined class inheritance cannot become no-BER Full");
+        var oldTrappedChest = Declare("1.14.4", "trapped_chest", ProjectionRenderPath.Model);
+        Check(oldTrappedChest.Status == ProjectionDeclarationStatus.Known &&
+            oldTrappedChest.Recipe == "ChestRenderer" &&
+            oldTrappedChest.Requirements.Any(r => r.Kind == K.SpecialModel),
+            "audited 1.14.4 class inheritance joins trapped chest to ChestRenderer");
         Check(Declare("a1.1.0", null, ProjectionRenderPath.LegacyNumeric).Status == ProjectionDeclarationStatus.UnknownRenderPath, "legacy numeric handlers unaudited");
         Check(Declare("a1.1.0", null, ProjectionRenderPath.Model).Status == ProjectionDeclarationStatus.UnknownRenderPath, "terrain atlas cannot be declared ordinary JSON");
         var unknown = Registry.SelectVersion("26.999", Registry.Versions["26.3"].ClientSha256);
