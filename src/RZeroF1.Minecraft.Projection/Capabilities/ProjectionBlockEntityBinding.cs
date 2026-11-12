@@ -24,6 +24,8 @@ internal static class ProjectionBlockEntityBindings
     internal static ProjectionBlockEntityBinding Bind(ProjectionState state, ProjectionBlockEntityData? data, int? sourceDataVersion)
     {
         var expected = TypeForBlock(state.Name);
+        if ((sourceDataVersion is 3120 or 3337 or 3463 or 3839 or 3953 or 3955 or 4082 or 4189 or 4325 or 4671 or 4786 or 4790 or 4903 or 5023 or 5126) &&
+            (state.Name is "minecraft:player_head" or "minecraft:player_wall_head")) expected = "minecraft:skull";
         if (sourceDataVersion == 3337 && state.Name == "minecraft:suspicious_sand") expected = "minecraft:suspicious_sand";
         if (data is null) return new(expected, false, null);
         var rawId = data.RawTypeId;
@@ -64,6 +66,11 @@ internal static class ProjectionBlockEntityBindings
             Add(wood + "_sign", "sign"); Add(wood + "_wall_sign", "sign");
             Add(wood + "_hanging_sign", "hanging_sign"); Add(wood + "_wall_hanging_sign", "hanging_sign");
             Add(wood + "_shelf", "shelf");
+        }
+        foreach (var wood in new[] { "oak", "spruce", "birch", "jungle", "acacia", "dark_oak", "mangrove", "cherry", "bamboo", "crimson", "warped", "pale_oak", "poplar" })
+        {
+            Add(wood + "_banner", "banner");
+            Add(wood + "_wall_banner", "banner");
         }
         foreach (var color in new[] { "white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray", "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black" })
         {

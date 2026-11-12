@@ -34,12 +34,7 @@ dotnet pack src/RZeroF1.Minecraft.Projection/RZeroF1.Minecraft.Projection.csproj
 
 输出目录为 `artifacts/packages/`。还原过程下载固定版本的 WinUI ABI 头文件包，编译后将原生 DLL 放入 NuGet 原生运行时目录。消费者需要运行在 Windows x64，单纯引用该包不会为宿主安装 WinUI。
 
-已有包消费者项目不引用 SDK 源码项目，可从本地产物还原并验证公开 API、原生 DLL 复制和导出函数加载：
-
-```powershell
-dotnet restore tests/PackageConsumer/PackageConsumer.csproj -r win-x64 --configfile tests/PackageConsumer/NuGet.Config -p:NuGetAudit=false
-dotnet run --project tests/PackageConsumer/PackageConsumer.csproj -c Release -r win-x64 --no-restore
-```
+包消费者验证在本地独立进行，消费者使用本地产物的 PackageReference，检查公开 API、原生 DLL 复制和导出函数加载。本地测试与包消费者项目不纳入 Git 跟踪，CI 保留 SDK 构建、打包、包内容白名单及 SourceLink 元数据检查。
 
 ## 当前源码的 P1 架构变更
 
@@ -48,6 +43,10 @@ dotnet run --project tests/PackageConsumer/PackageConsumer.csproj -c Release -r 
 ## 当前源码的 P2 架构变更
 
 内部增加共享 Cuboid/Quad/ModelPartGraph/Pose、逻辑 Sprite/材质角色和首批静态专用模型生产者。现有公开 API、Native ABI、Windows x64 限制和包白名单保持不变；动态专用效果及 P3/P4 能力未因本地 P2 包而宣称完整支持。
+
+## 当前源码的 P3 生产接入
+
+表面染色/Pattern、陶罐四面 Sprite、字体资源解析与静态头颅已接入共用生产流程；支持范围和已知文字/外观缺陷见 `api.md`。本地验证包仍使用 0.1.1，不表示该构建已发布。JAR、Mapping、测试、图像、PDF 和内部研究目录不进入公开包；P3 机制规格嵌入 SDK 程序集，不作为单独原版资源文件打包。
 
 ## 0.1.1 版本变更
 

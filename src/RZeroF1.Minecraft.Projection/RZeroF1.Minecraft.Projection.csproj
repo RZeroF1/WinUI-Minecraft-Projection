@@ -14,7 +14,7 @@
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
-    <PackageReleaseNotes>内部保留 Litematic/Sponge v2/v3 Block Entity，独立识别源数据与客户端 Profile；接入组合贡献计划和 Partial/未知数据诊断；新增共享部件、逻辑 UV、Sprite source 子集和限定资源端点的首批静态专用模型（详见 API 文档），保留普通模型与流体及原 Native ABI。修复楼梯等矩形面的 UV Lock 旋转拉伸；孤立玻璃板预览过滤默认开启，可显式关闭并保留原始材料统计。修复渲染占位、动画首帧、模型遮挡与旋转、薄面和基础流体；新增分组渲染诊断；限定公开包内容。新增 VirtualSurfaceImageSource GPU 输出，支持 XAML 亚克力叠加；保留 SwapChainPanel 接入，统一截图来源，补充显存估算并修正尺寸状态更新；统一中文文档并提供英文 README。</PackageReleaseNotes>
+    <PackageReleaseNotes>P3 共享图案表面、陶罐组件、字体资源及本地外观接入生产；修正头颅逻辑画布、配方与实例外观缓存。固定生物头按机制完成 20 个精确客户端 CPU/资源验证，陶罐覆盖 14 个客户端；告示牌文字方向及布局仍未通过，完整边界见 API 文档。内部保留 Litematic/Sponge v2/v3 Block Entity，独立识别源数据与客户端 Profile；接入组合贡献计划和 Partial/未知数据诊断；新增共享部件、逻辑 UV、Sprite source 子集和限定资源端点的首批静态专用模型，保留普通模型与流体及原 Native ABI。修复楼梯等矩形面的 UV Lock 旋转拉伸；孤立玻璃板预览过滤默认开启，可显式关闭并保留原始材料统计。修复渲染占位、动画首帧、模型遮挡与旋转、薄面和基础流体；新增分组渲染诊断；限定公开包内容。新增 VirtualSurfaceImageSource GPU 输出，支持 XAML 亚克力叠加；保留 SwapChainPanel 接入，统一截图来源，补充显存估算并修正尺寸状态更新；统一中文文档并提供英文 README。</PackageReleaseNotes>
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>https://github.com/RZeroF1/WinUI-Minecraft-Projection</RepositoryUrl>
     <PackageProjectUrl>https://github.com/RZeroF1/WinUI-Minecraft-Projection</PackageProjectUrl>
@@ -37,6 +37,9 @@
     <EmbeddedResource Include="Capabilities\p2-compatibility.json"
                       LogicalName="RZeroF1.Minecraft.Projection.p2-compatibility.json" />
     <None Update="Capabilities\p2-compatibility.json" Pack="false" />
+    <EmbeddedResource Include="Capabilities\p3-compatibility.json"
+                      LogicalName="RZeroF1.Minecraft.Projection.p3-compatibility.json" />
+    <None Update="Capabilities\p3-compatibility.json" Pack="false" />
   </ItemGroup>
 
   <ItemGroup>

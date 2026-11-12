@@ -10,12 +10,23 @@ internal sealed class ProjectionResourceSet : IDisposable
 {
     private const long MaxResourceBytes = 16 * 1024 * 1024;
     private const long MaxCachedBytes = 128 * 1024 * 1024;
+    private const long MaxDerivedTextureBytes = 32 * 1024 * 1024;
     private readonly List<ZipArchive> _layers = [];
     private readonly Dictionary<string, byte[]> _cache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, byte[]> _assetObjectCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _assetIndexHashes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _assetObjectHashes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string?> _potPatternTextures = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _bannerPatternIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _localizedNames = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _warnings = [];
     private readonly HashSet<string> _forceTranslucent = new(StringComparer.OrdinalIgnoreCase);
     private long _cachedBytes;
+    private long _derivedTextureBytes;
+    private long _assetObjectBytes;
+    private string? _assetIndexId;
+    private long _bannerPatternGeneration = -1;
+    private readonly string? _assetStoreRoot;
     private bool _disposed;
     private static long _nextGeneration;
     private readonly FileStream _clientStream;
@@ -46,19 +57,24 @@ internal sealed class ProjectionResourceSet : IDisposable
     }
     private bool _modelsLoaded;
     private readonly Dictionary<string, ProjectionTextureImage> _images = new(StringComparer.OrdinalIgnoreCase);
+    private bool _assetIndexLoaded;
     private ProjectionSpriteResolver? _sprites;
     internal ProjectionSpriteResolver Sprites => _sprites ??= new(this);
 
-    internal ProjectionResourceSet(string clientJarPath)
+    internal int RegisteredBannerPatternCount => _bannerPatternIds.Count;
+
+    internal ProjectionResourceSet(string clientJarPath, string? assetIndexId = null, string? assetStoreRoot = null)
     {
         ClientJarPath = Path.GetFullPath(clientJarPath);
+        _assetIndexId = string.IsNullOrWhiteSpace(assetIndexId) ? null : assetIndexId;
+        _assetStoreRoot = string.IsNullOrWhiteSpace(assetStoreRoot) ? null : Path.GetFullPath(assetStoreRoot);
         _clientStream = File.OpenRead(ClientJarPath);
         try { _layers.Add(new ZipArchive(_clientStream, ZipArchiveMode.Read, leaveOpen: false)); }
         catch { _clientStream.Dispose(); throw; }
     }
 
     internal string ClientJarPath { get; }
-    internal long CachedBytes => _cachedBytes + (_sprites?.EstimatedCpuBytes ?? 0);
+    internal long CachedBytes => _cachedBytes + _derivedTextureBytes + _assetObjectBytes + (_sprites?.EstimatedCpuBytes ?? 0);
     internal IReadOnlyList<string> Warnings => _warnings;
     internal IReadOnlySet<string> ForceTranslucent => _forceTranslucent;
     internal IReadOnlyDictionary<string, ProjectionBlockModelDefinition> Models { get; private set; } =
@@ -73,6 +89,16 @@ internal sealed class ProjectionResourceSet : IDisposable
         Generation = Interlocked.Increment(ref _nextGeneration);
         _cache.Clear();
         _images.Clear();
+        _derivedTextureBytes = 0;
+        _assetObjectCache.Clear();
+        _assetIndexHashes.Clear();
+        _assetObjectBytes = 0;
+        _assetObjectHashes.Clear();
+        _assetIndexId = ClientAssetIndexId();
+        _potPatternTextures.Clear();
+        _bannerPatternIds.Clear();
+        _bannerPatternGeneration = -1;
+        _assetIndexLoaded = false;
         _sprites = null;
         _localizedNames.Clear();
         _cachedBytes = 0;
@@ -109,7 +135,141 @@ internal sealed class ProjectionResourceSet : IDisposable
             return bytes;
         }
 
+        return ReadExternalAssetObject(path);
+    }
+
+    internal void RegisterDerivedTexture(string textureId, byte[] png, bool hasTransparency)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(png);
+        var id = NormalizeResourceId(textureId);
+        if (id == "__missing__")
+            throw new ArgumentException("A derived texture cannot use the missing-texture ID.", nameof(textureId));
+        if (png.Length == 0 || png.Length > MaxResourceBytes)
+            throw new InvalidDataException("Derived texture exceeds the resource budget.");
+        if (_images.TryGetValue(id, out var previous))
+            _derivedTextureBytes -= previous.Png.LongLength;
+        if (_derivedTextureBytes + png.LongLength > MaxDerivedTextureBytes)
+            throw new InvalidDataException("DerivedTextureBudgetExceeded");
+        _images[id] = new ProjectionTextureImage(png.ToArray(), hasTransparency);
+        _derivedTextureBytes += png.LongLength;
+    }
+
+    internal string? ResolvePotPatternTexture(string patternId)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var id = NormalizeResourceId(patternId);
+        if (_potPatternTextures.TryGetValue(id, out var cached)) return cached;
+        var split = id.Split(':', 2);
+        var bytes = Read($"data/{split[0]}/decorated_pot_pattern/{split[1]}.json");
+        string? texture = null;
+        if (bytes is not null)
+        {
+            try
+            {
+                using var json = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 32 });
+                if (json.RootElement.TryGetProperty("asset_id", out var asset) && asset.ValueKind == JsonValueKind.String)
+                {
+                    var assetParts = NormalizeResourceId(asset.GetString()!).Split(':', 2);
+                    texture = assetParts[0] + ":entity/decorated_pot/" + assetParts[1];
+                }
+            }
+            catch (JsonException exception) { SpriteWarning($"InvalidPotPatternDefinition:{id}:{exception.GetType().Name}"); }
+        }
+        if (texture is null)
+        {
+            var name = split[1].Split('/')[^1];
+            if (name.EndsWith("_pottery_pattern", StringComparison.Ordinal))
+                name = name[..^"_pottery_pattern".Length];
+            else if (name.StartsWith("pottery_pattern_", StringComparison.Ordinal))
+                name = name["pottery_pattern_".Length..];
+            foreach (var spriteName in new[] { name + "_pottery_pattern", "pottery_pattern_" + name })
+            {
+                var candidate = $"{split[0]}:entity/decorated_pot/{spriteName}";
+                var sprite = Sprites.Resolve("minecraft:decorated_pot", candidate, 16, 16, ProjectionMaterialRole.Cutout, default);
+                if (sprite.Image.Failure is not null) continue;
+                texture = sprite.SpriteId;
+                break;
+            }
+        }
+        else
+        {
+            var sprite = Sprites.Resolve("minecraft:decorated_pot", texture, 16, 16, ProjectionMaterialRole.Cutout, default);
+            texture = sprite.Image.Failure is null ? sprite.SpriteId : null;
+        }
+        _potPatternTextures[id] = texture;
+        return texture;
+    }
+
+    internal string? ResolveBannerPatternTexture(string patternId, string color)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        LoadBannerPatternIds();
+        var id = NormalizeResourceId(patternId);
+        var split = id.Split(':', 2);
+        var path = split[1];
+        if (path.StartsWith("banner/", StringComparison.Ordinal)) path = path["banner/".Length..];
+        var modernSprite = split[0] + ":entity/banner/" + path;
+        var legacySprite = modernSprite;
+        if (legacySprite.EndsWith("_banner_pattern", StringComparison.Ordinal))
+            legacySprite = legacySprite[..^"_banner_pattern".Length];
+        var definition = Read($"data/{split[0]}/banner_pattern/{split[1]}.json");
+        if (definition is not null)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(definition, new JsonDocumentOptions { MaxDepth = 32 });
+                if (document.RootElement.TryGetProperty("asset_id", out var asset) && asset.ValueKind == JsonValueKind.String)
+                {
+                    var assetParts = NormalizeResourceId(asset.GetString()!).Split(':', 2);
+                    modernSprite = assetParts[0] + ":entity/banner/" + assetParts[1];
+                }
+            }
+            catch (JsonException exception) { SpriteWarning($"InvalidBannerPatternDefinition:{id}:{exception.GetType().Name}"); return null; }
+        }
+        var legacyColorSprite = legacySprite + "_" + color;
+        if (_bannerPatternIds.Contains(legacyColorSprite)) return legacyColorSprite;
+        if (_bannerPatternIds.Contains(modernSprite)) return modernSprite;
+        if (_bannerPatternIds.Contains(legacySprite)) return legacySprite;
         return null;
+    }
+
+    internal string? ResolveLegacyBannerPattern(string patternCode)
+    {
+        var id = patternCode switch
+        {
+            "bs" => "stripe_bottom", "ts" => "stripe_top", "ls" => "stripe_left", "rs" => "stripe_right",
+            "cs" => "stripe_center", "ms" => "stripe_middle", "drs" => "stripe_downright", "dls" => "stripe_downleft",
+            "ss" => "small_stripes", "cr" => "cross", "sc" => "straight_cross", "ld" => "diagonal_left",
+            "rd" => "diagonal_right", "lud" => "diagonal_up_left", "rud" => "diagonal_up_right",
+            "vh" => "half_vertical", "vhr" => "half_vertical_right", "hh" => "half_horizontal",
+            "hhb" => "half_horizontal_bottom", "bl" => "square_bottom_left", "br" => "square_bottom_right",
+            "tl" => "square_top_left", "tr" => "square_top_right", "bts" => "triangles_bottom",
+            "tts" => "triangles_top", "bri" => "bricks", "mc" => "circle", "mr" => "rhombus",
+            "cbo" => "border", "bo" => "curly_border", "gra" => "gradient", "gru" => "gradient_up",
+            "cre" => "creeper", "sku" => "skull", "flo" => "flower", "moj" => "mojang",
+            "glb" => "globe", "pig" => "piglin", "flw" => "flow", "gus" => "guster", _ => null
+        };
+        return id;
+    }
+
+    private void LoadBannerPatternIds()
+    {
+        if (_bannerPatternGeneration == Generation) return;
+        _bannerPatternIds.Clear();
+        if (_sprites is not null)
+            foreach (var sprite in _sprites.EnumerateSprites("minecraft:banner_patterns"))
+                _bannerPatternIds.Add(sprite);
+        foreach (var path in EnumeratePaths("assets/"))
+        {
+            if (!path.Contains("/textures/entity/banner/", StringComparison.Ordinal) || !path.EndsWith(".png", StringComparison.Ordinal))
+                continue;
+            var parts = path.Split('/');
+            if (parts.Length != 6) continue;
+            var file = parts[^1][..^4];
+            _bannerPatternIds.Add(NormalizeResourceId($"{parts[1]}:entity/banner/{file}"));
+        }
+        _bannerPatternGeneration = Generation;
     }
 
     // Atlas definitions append their sources from low to high resource layers.
@@ -208,6 +368,39 @@ internal sealed class ProjectionResourceSet : IDisposable
             : char.ToUpperInvariant(fallback[0]) + fallback[1..];
     }
 
+    internal string? Translate(string key)
+    {
+        LoadLocalizedNames();
+        return _localizedNames.GetValueOrDefault(key);
+    }
+
+    internal IReadOnlyList<byte[]> ReadResourceLayers(string path)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ValidatePath(path);
+        var result = new List<byte[]>();
+        for (var index = 0; index < _layers.Count; index++)
+        {
+            var layer = _layers[index];
+            var entry = layer.GetEntry(path);
+            if (entry is not null)
+            {
+                if (entry.Length > MaxResourceBytes)
+                    throw new InvalidDataException($"Resource stack entry {path} exceeds the resource budget.");
+                using var input = entry.Open();
+                using var output = new MemoryStream((int)entry.Length);
+                input.CopyTo(output);
+                result.Add(output.ToArray());
+            }
+            // Newer clients expose part of the resource tree through the
+            // official asset object index. Insert those verified resources
+            // immediately above the bundled client JAR, below user packs.
+            if (index == 0 && ReadExternalAssetObject(path) is { } external)
+                result.Add(external);
+        }
+        return result;
+    }
+
     internal ProjectionTextureImage LoadTexture(string textureId)
     {
         if (textureId == "__missing__") return new(ProjectionTextureLoader.MissingPng, false);
@@ -227,6 +420,164 @@ internal sealed class ProjectionResourceSet : IDisposable
         return textureId.Equals("__missing__", StringComparison.OrdinalIgnoreCase)
             ? null
             : Read(ResourcePath(textureId, "textures", ".png"));
+    }
+
+    private byte[]? ReadExternalAssetObject(string path)
+    {
+        if (!path.StartsWith("assets/", StringComparison.Ordinal))
+            return null;
+        EnsureAssetIndex();
+        var assetPath = path["assets/".Length..];
+        if (!_assetObjectHashes.TryGetValue(assetPath, out var hash))
+            return null;
+        if (_assetObjectCache.TryGetValue(hash, out var cached))
+            return cached;
+        var root = DiscoverAssetObjectRoot();
+        if (root is null)
+            return null;
+        var objectPath = Path.Combine(root, hash[..2], hash);
+        if (!File.Exists(objectPath))
+            return null;
+        var file = new FileInfo(objectPath);
+        if (file.Length <= 0 || file.Length > MaxResourceBytes)
+            throw new InvalidDataException($"Asset object {path} exceeds the resource budget.");
+        var bytes = File.ReadAllBytes(objectPath);
+        if (!Convert.ToHexString(SHA1.HashData(bytes)).Equals(hash, StringComparison.OrdinalIgnoreCase))
+        {
+            _warnings.Add($"AssetObjectHashMismatch:{assetPath}");
+            return null;
+        }
+        if (_assetObjectCache.Values.Sum(value => (long)value.Length) + bytes.LongLength > MaxCachedBytes)
+            throw new InvalidDataException("AssetObjectCacheBudgetExceeded");
+        _assetObjectCache[hash] = bytes;
+        _assetObjectBytes += bytes.LongLength;
+        return bytes;
+    }
+
+    private void EnsureAssetIndex()
+    {
+        if (_assetIndexLoaded && _assetIndexId == ClientAssetIndexId())
+            return;
+        _assetObjectHashes.Clear();
+        _assetObjectCache.Clear();
+        _assetObjectBytes = 0;
+        _assetIndexId = _assetIndexId ?? ClientAssetIndexId();
+        _assetIndexLoaded = true;
+        var expectedIndex = _assetIndexId ?? ClientAssetIndexId();
+        if (expectedIndex is null)
+        {
+            _warnings.Add("AssetIndexIdentityUnavailable");
+            return;
+        }
+        foreach (var directory in DiscoverAssetIndexRoots())
+        {
+            if (!Directory.Exists(directory)) continue;
+            var file = Path.Combine(directory, expectedIndex + ".json");
+            if (!File.Exists(file)) continue;
+            try
+            {
+                var indexSha = _assetIndexHashes.GetValueOrDefault(expectedIndex);
+                if (indexSha is not null && !Convert.ToHexString(SHA1.HashData(File.ReadAllBytes(file))).Equals(indexSha, StringComparison.OrdinalIgnoreCase))
+                {
+                    _warnings.Add($"AssetIndexHashMismatch:{expectedIndex}");
+                    continue;
+                }
+                using var document = JsonDocument.Parse(File.ReadAllBytes(file), new JsonDocumentOptions { MaxDepth = 32 });
+                if (!document.RootElement.TryGetProperty("objects", out var objects) || objects.ValueKind != JsonValueKind.Object)
+                    continue;
+            foreach (var item in objects.EnumerateObject())
+                {
+                    if (item.Value.TryGetProperty("hash", out var hash) && hash.ValueKind == JsonValueKind.String &&
+                        hash.GetString() is { Length: 40 } value && value.All(char.IsAsciiHexDigit))
+                        _assetObjectHashes[item.Name] = value.ToLowerInvariant();
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+            {
+                _warnings.Add($"AssetIndexReadFailure:{file}:{exception.GetType().Name}");
+            }
+        }
+        if (expectedIndex is not null) _assetIndexId = expectedIndex;
+    }
+
+    private string? ClientAssetIndexId()
+    {
+        try
+        {
+            var entry = _layers[0].GetEntry("version.json");
+            if (entry is not null)
+            {
+                using var input = entry.Open();
+                using var json = JsonDocument.Parse(input, new JsonDocumentOptions { MaxDepth = 16 });
+                if (FindProperty(json.RootElement, "assetIndex") is { ValueKind: JsonValueKind.Object } index &&
+                    FindProperty(index, "id") is { ValueKind: JsonValueKind.String } id)
+                {
+                    if (FindProperty(index, "sha1") is { ValueKind: JsonValueKind.String } sha && sha.GetString() is { Length: 40 } hash)
+                        _assetIndexHashes[id.GetString()!] = hash;
+                    return id.GetString();
+                }
+            }
+            using var metadata = File.OpenRead(Path.ChangeExtension(ClientJarPath, ".json"));
+            using var version = JsonDocument.Parse(metadata, new JsonDocumentOptions { MaxDepth = 16 });
+            if (FindProperty(version.RootElement, "assetIndex") is { ValueKind: JsonValueKind.Object } asset &&
+                FindProperty(asset, "id") is { ValueKind: JsonValueKind.String } assetId)
+            {
+                if (FindProperty(asset, "sha1") is { ValueKind: JsonValueKind.String } assetSha && assetSha.GetString() is { Length: 40 } assetHash)
+                    _assetIndexHashes[assetId.GetString()!] = assetHash;
+                return assetId.GetString();
+            }
+            return FindProperty(version.RootElement, "assets") is { ValueKind: JsonValueKind.String } assets
+                ? assets.GetString()
+                : null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+        {
+            _warnings.Add("AssetIndexMetadataFailure:" + exception.GetType().Name);
+            return null;
+        }
+    }
+
+    private static JsonElement? FindProperty(JsonElement element, string name)
+    {
+        if (element.ValueKind != JsonValueKind.Object) return null;
+        foreach (var property in element.EnumerateObject())
+            if (property.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                return property.Value;
+        return null;
+    }
+
+    private IEnumerable<string> DiscoverAssetIndexRoots()
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (_assetStoreRoot is not null)
+            result.Add(Path.Combine(_assetStoreRoot, "indexes"));
+        var jarDirectory = Path.GetDirectoryName(ClientJarPath);
+        if (jarDirectory is not null)
+        {
+            result.Add(Path.GetFullPath(Path.Combine(jarDirectory, "..", "..", "assets", "indexes")));
+            result.Add(Path.GetFullPath(Path.Combine(jarDirectory, "..", "..", "..", "assets", "indexes")));
+        }
+        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        if (!string.IsNullOrWhiteSpace(roaming))
+            result.Add(Path.Combine(roaming, ".minecraft", "assets", "indexes"));
+        return result;
+    }
+
+    private string? DiscoverAssetObjectRoot()
+    {
+        var jarDirectory = Path.GetDirectoryName(ClientJarPath);
+        var candidates = new List<string>();
+        if (_assetStoreRoot is not null)
+            candidates.Add(Path.Combine(_assetStoreRoot, "objects"));
+        if (jarDirectory is not null)
+        {
+            candidates.Add(Path.GetFullPath(Path.Combine(jarDirectory, "..", "..", "assets", "objects")));
+            candidates.Add(Path.GetFullPath(Path.Combine(jarDirectory, "..", "..", "..", "assets", "objects")));
+        }
+        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        foreach (var candidate in candidates.Append(Path.Combine(roaming, ".minecraft", "assets", "objects")))
+            if (Directory.Exists(candidate)) return candidate;
+        return null;
     }
 
     internal IEnumerable<string> EnumeratePaths(string prefix)
@@ -415,6 +766,13 @@ internal sealed class ProjectionResourceSet : IDisposable
         _layers.Clear();
         _cache.Clear();
         _images.Clear();
+        _derivedTextureBytes = 0;
+        _assetObjectCache.Clear();
+        _assetObjectBytes = 0;
+        _assetObjectHashes.Clear();
+        _assetIndexId = null;
+        _assetIndexLoaded = false;
+        _potPatternTextures.Clear();
         _sprites = null;
         _localizedNames.Clear();
         _cachedBytes = 0;

@@ -15,21 +15,47 @@ internal sealed class ProjectionSpriteResolver(ProjectionResourceSet resources)
 {
     private const int MaxSources = 100_000;
     private readonly Dictionary<string, ProjectionAtlasSource> _sources = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string Atlas, string Sprite), ProjectionAtlasSource> _scopedSources = [];
     private long _generation = -1;
+    internal long Generation => _generation;
     internal long EstimatedCpuBytes => _sources.Sum(pair => 128L + pair.Key.Length * 2L + pair.Value.TextureId.Length * 2L);
 
+    internal IReadOnlyList<string> EnumerateSprites(string atlasId)
+    {
+        if (_generation != resources.Generation) LoadSources(default);
+        var atlas = ProjectionResourceSet.NormalizeResourceId(atlasId);
+        return _scopedSources.Keys.Where(key => key.Atlas == atlas).Select(key => key.Sprite).Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal).ToArray();
+    }
+
     internal ProjectionSprite Resolve(string textureId, int logicalWidth, int logicalHeight,
+        ProjectionMaterialRole role, CancellationToken cancellationToken)
+        => ResolveCore(null, textureId, logicalWidth, logicalHeight, role, cancellationToken);
+
+    internal ProjectionSprite Resolve(string atlasId, string textureId, int logicalWidth, int logicalHeight,
+        ProjectionMaterialRole role, CancellationToken cancellationToken)
+        => ResolveCore(ProjectionResourceSet.NormalizeResourceId(atlasId), textureId, logicalWidth, logicalHeight, role, cancellationToken);
+
+    private ProjectionSprite ResolveCore(string? atlasId, string textureId, int logicalWidth, int logicalHeight,
         ProjectionMaterialRole role, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (logicalWidth <= 0 || logicalHeight <= 0) throw new ArgumentOutOfRangeException(nameof(logicalWidth));
         if (_generation != resources.Generation) LoadSources(cancellationToken);
         var id = ProjectionResourceSet.NormalizeResourceId(textureId);
-        var mapped = _sources.TryGetValue(id, out var source);
+        ProjectionAtlasSource? source = null;
+        var mapped = atlasId is not null
+            ? _scopedSources.TryGetValue((atlasId, id), out source)
+            : _sources.TryGetValue(id, out source);
         // Logical material roles use their historical texture address, whereas
         // modern block-entity atlases omit the entity/ prefix from their sprite IDs.
         if (!mapped && id.StartsWith("minecraft:entity/", StringComparison.Ordinal))
-            mapped = _sources.TryGetValue("minecraft:" + id["minecraft:entity/".Length..], out source);
+        {
+            var fallback = "minecraft:" + id["minecraft:entity/".Length..];
+            mapped = atlasId is not null
+                ? _scopedSources.TryGetValue((atlasId, fallback), out source)
+                : _sources.TryGetValue(fallback, out source);
+        }
         source ??= new(id);
         var image = resources.LoadTexture(source.TextureId);
         if (source.Failure is { } failure) image = image with { Failure = failure };
@@ -54,12 +80,14 @@ internal sealed class ProjectionSpriteResolver(ProjectionResourceSet resources)
     private void LoadSources(CancellationToken ct)
     {
         _sources.Clear();
+        _scopedSources.Clear();
         long definitionBytes = 0;
         try
         {
             foreach (var path in resources.EnumeratePaths("assets/").Where(path =>
                 path.Contains("/atlases/", StringComparison.Ordinal) && path.EndsWith(".json", StringComparison.Ordinal)).Order(StringComparer.Ordinal))
             {
+                var atlas = AtlasId(path);
                 var pathSprites = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var bytes in resources.ReadAtlasLayers(path))
                 {
@@ -73,7 +101,7 @@ internal sealed class ProjectionSpriteResolver(ProjectionResourceSet resources)
                         foreach (var source in json.RootElement.GetProperty("sources").EnumerateArray())
                         {
                             ct.ThrowIfCancellationRequested();
-                            Apply(source, ct);
+                            Apply(source, atlas, ct);
                             if (_sources.Count > MaxSources) throw new InvalidDataException("AtlasSpriteBudgetExceeded");
                         }
                         foreach (var pair in _sources)
@@ -89,20 +117,27 @@ internal sealed class ProjectionSpriteResolver(ProjectionResourceSet resources)
             }
             _generation = resources.Generation;
         }
-        catch { _sources.Clear(); _generation = -1; throw; }
+        catch { _sources.Clear(); _scopedSources.Clear(); _generation = -1; throw; }
     }
 
-    private void Apply(JsonElement source, CancellationToken ct)
+    private void Apply(JsonElement source, string atlas, CancellationToken ct)
     {
         var type = source.GetProperty("type").GetString()!;
         if (type.StartsWith("minecraft:", StringComparison.Ordinal)) type = type["minecraft:".Length..];
         switch (type)
         {
+            case "paletted_permutations":
+                // Armor-trim permutation sheets do not participate in the P3
+                // banner, pot, sign, or head atlases. Keep those valid Atlas
+                // sources quiet while leaving unsupported sprite identities explicit.
+                break;
             case "single":
                 {
                     var resource = Id(source.GetProperty("resource").GetString()!);
                     var sprite = source.TryGetProperty("sprite", out var value) ? Id(value.GetString()!) : resource;
-                    _sources[sprite] = new(resource);
+                    var mapped = new ProjectionAtlasSource(resource);
+                    _scopedSources[(atlas, sprite)] = mapped;
+                    _sources[sprite] = mapped;
                     break;
                 }
             case "unstitch":
@@ -116,17 +151,22 @@ internal sealed class ProjectionSpriteResolver(ProjectionResourceSet resources)
                         {
                             ct.ThrowIfCancellationRequested();
                             var sprite = Id(region.GetProperty("sprite").GetString()!);
-                            _sources[sprite] = new(resource, new(region.GetProperty("x").GetSingle(), region.GetProperty("y").GetSingle(),
+                            var mapped = new ProjectionAtlasSource(resource, new(region.GetProperty("x").GetSingle(), region.GetProperty("y").GetSingle(),
                                 region.GetProperty("width").GetSingle(), region.GetProperty("height").GetSingle()), dx, dy,
                                 dx <= 0 || dy <= 0 || !float.IsFinite(dx + dy) ? "InvalidSpriteDivisor" : null);
+                            _scopedSources[(atlas, sprite)] = mapped;
+                            _sources[sprite] = mapped;
                         }
                     }
                     else
                     {
                         // Existing pixel-region adapter retained for internal fixture compatibility.
                         var region = source.GetProperty("region");
-                        _sources[Id(source.GetProperty("sprite").GetString()!)] = new(resource,
+                        var sprite = Id(source.GetProperty("sprite").GetString()!);
+                        var mapped = new ProjectionAtlasSource(resource,
                             new(region[0].GetSingle(), region[1].GetSingle(), region[2].GetSingle(), region[3].GetSingle()));
+                        _scopedSources[(atlas, sprite)] = mapped;
+                        _sources[sprite] = mapped;
                     }
                     break;
                 }
@@ -140,7 +180,10 @@ internal sealed class ProjectionSpriteResolver(ProjectionResourceSet resources)
                         ct.ThrowIfCancellationRequested();
                         if (!path.EndsWith(".png", StringComparison.Ordinal)) continue;
                         var relative = path[pathPrefix.Length..^4];
-                        _sources[Id(directory[0] + ":" + prefix + relative)] = new(directory[0] + ":" + directory[1] + "/" + relative);
+                        var sprite = Id(directory[0] + ":" + prefix.TrimEnd('/') + "/" + relative);
+                        var mapped = new ProjectionAtlasSource(directory[0] + ":" + directory[1] + "/" + relative);
+                        _scopedSources[(atlas, sprite)] = mapped;
+                        _sources[sprite] = mapped;
                         if (_sources.Count > MaxSources) throw new InvalidDataException("AtlasSpriteBudgetExceeded");
                     }
                     break;
@@ -157,7 +200,11 @@ internal sealed class ProjectionSpriteResolver(ProjectionResourceSet resources)
                         ct.ThrowIfCancellationRequested();
                         var parts = key.Split(':', 2);
                         if (namespaceRegex.IsMatch(parts[0]) && pathRegex.IsMatch(parts[1]))
-                            _sources[key] = _sources[key] with { Failure = "AtlasSpriteFiltered" };
+                        {
+                            var mapped = _sources[key] with { Failure = "AtlasSpriteFiltered" };
+                            _sources[key] = mapped;
+                            if (_scopedSources.ContainsKey((atlas, key))) _scopedSources[(atlas, key)] = mapped;
+                        }
                     }
                     break;
                 }
@@ -173,5 +220,13 @@ internal sealed class ProjectionSpriteResolver(ProjectionResourceSet resources)
         if (!ProjectionVisualStateAdapter.IsResourceId(id) || id.Split('/').Any(part => part is "." or ".."))
             throw new JsonException("Invalid atlas resource ID");
         return id;
+    }
+
+    private static string AtlasId(string path)
+    {
+        var parts = path.Split('/');
+        return parts.Length >= 4
+            ? ProjectionResourceSet.NormalizeResourceId(parts[1] + ":" + parts[^1][..^5])
+            : "minecraft:unknown";
     }
 }

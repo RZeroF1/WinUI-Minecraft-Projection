@@ -39,6 +39,9 @@ internal static class ProjectionRenderPlanResolver
         document.BlockEntities.TryGet(block, out var payload);
         var binding = ProjectionBlockEntityBindings.Bind(state, payload, document.DataVersion);
         var type = ProjectionBlockEntityBindings.TypeForBlock(state.Name) ?? binding.TypeId;
+        if (state.Name is "minecraft:player_head" or "minecraft:player_wall_head" &&
+            profile.Client.Version?.Id == "1.19.2" && profile.Client.Version.BlockEntityTypes?.Contains("minecraft:skull") == true)
+            type = "minecraft:skull";
         if (type == "minecraft:trapped_chest" && profile.Client.Version?.Profile.Routing == "LegacyClass" &&
             ProjectionSpecialModelCompatibility.Select(profile.Client, "ChestRenderer") is not null)
             type = "minecraft:chest";
@@ -127,7 +130,7 @@ internal static class ProjectionRenderPlanResolver
             return (S.KnownEmpty, "NonAnimatedHead: explicit vanilla head variant");
         if (requirement.Kind == K.Text)
             return visual.Sign.Status != ProjectionVisualDataStatus.Known ? (S.UnknownData, visual.Sign.Evidence) :
-                visual.Sign.Value!.IsEmpty ? (S.KnownEmpty, "Adapted front/back messages explicitly empty") : (S.Unsupported, "Text producer not implemented");
+                visual.Sign.Value!.IsEmpty ? (S.KnownEmpty, "Adapted front/back messages explicitly empty") : (S.Unsupported, "Text geometry not produced or provider coverage incomplete");
         if (requirement.Kind == K.ItemContent || requirement.EmptyCondition == "NoDisplayedItems")
             return visual.Items.Status != ProjectionVisualDataStatus.Known ? (S.UnknownData, visual.Items.Evidence) :
                 visual.Items.Value!.Count == 0 ? (S.KnownEmpty, "Adapted displayed item list explicitly empty") : (S.Unsupported, "Item view producer not implemented");
@@ -137,10 +140,18 @@ internal static class ProjectionRenderPlanResolver
                 return visual.PotSides.Status != ProjectionVisualDataStatus.Known ? (S.UnknownData, visual.PotSides.Evidence) :
                     visual.PotSides.Value!.All(side => side == "minecraft:brick") ? (S.KnownEmpty, "Four adapted pot sides explicitly brick") : (S.Unsupported, "Decorated surface producer not implemented");
             return visual.Patterns.Status != ProjectionVisualDataStatus.Known ? (S.UnknownData, visual.Patterns.Evidence) :
-                visual.Patterns.Value!.Count == 0 ? (S.KnownEmpty, "Adapted pattern list explicitly empty") : (S.Unsupported, "Layered surface producer not implemented");
+                visual.Patterns.Value!.Layers.Count == 0 ? (S.KnownEmpty, "Adapted pattern list explicitly empty") : (S.Unsupported, "Layered surface geometry not produced or a pattern is unresolved");
         }
-        if (requirement.Kind == K.Appearance && visual.Appearance.Status != ProjectionVisualDataStatus.Known)
-            return (S.UnknownData, visual.Appearance.Evidence);
+        if (requirement.Kind == K.Appearance)
+        {
+            if (requirement.EmptyCondition == "NonPlayerHead" && input.State.Name is
+                "minecraft:skeleton_skull" or "minecraft:skeleton_wall_skull" or "minecraft:wither_skeleton_skull" or "minecraft:wither_skeleton_wall_skull" or
+                "minecraft:zombie_head" or "minecraft:zombie_wall_head" or "minecraft:creeper_head" or "minecraft:creeper_wall_head" or
+                "minecraft:dragon_head" or "minecraft:dragon_wall_head" or "minecraft:piglin_head" or "minecraft:piglin_wall_head")
+                return (S.KnownEmpty, "Non-player head does not use profile appearance");
+            if (visual.Appearance.Status != ProjectionVisualDataStatus.Known) return (S.UnknownData, visual.Appearance.Evidence);
+            return (S.UnknownData, "Appearance geometry did not produce a local, verified skin texture");
+        }
         if (requirement.Kind == K.EntityContent && visual.DisplayEntity.Status != ProjectionVisualDataStatus.Known)
             return (S.UnknownData, visual.DisplayEntity.Evidence);
         if (requirement.Kind == K.SpecialModel && input.Profile.Client.Version?.Profile.Bed == "ColorNbt" && input.Declaration.BlockEntityTypeId == "minecraft:bed" &&

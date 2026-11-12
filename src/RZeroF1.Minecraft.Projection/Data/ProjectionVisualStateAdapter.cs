@@ -25,23 +25,48 @@ internal sealed record ProjectionSignVisual(ProjectionSignSide Front, Projection
 }
 internal sealed record ProjectionItemVisual(int Slot, string Id, int Count, ProjectionVisualValue? Components);
 internal sealed record ProjectionPatternVisual(string Pattern, string Color);
+// Preserve ordered-list consumption while carrying the separately adapted base color.
+internal sealed record ProjectionBannerVisual(string BaseColor, IReadOnlyList<ProjectionPatternVisual> Layers)
+    : IReadOnlyList<ProjectionPatternVisual>
+{
+    public int Count => Layers.Count;
+    public ProjectionPatternVisual this[int index] => Layers[index];
+    public IEnumerator<ProjectionPatternVisual> GetEnumerator() => Layers.GetEnumerator();
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+}
+internal sealed record ProjectionPotSideVisual(string Side, string? ItemId, string? PatternId,
+    ProjectionVisualValue? Components, bool IsDefault, string? PatternAssetId = null);
 internal sealed record ProjectionVisualState(
     ProjectionVisualDataProfile Profile,
     ProjectionVisualField<ProjectionSignVisual> Sign,
     ProjectionVisualField<IReadOnlyList<ProjectionItemVisual>> Items,
-    ProjectionVisualField<IReadOnlyList<ProjectionPatternVisual>> Patterns,
+    ProjectionVisualField<ProjectionBannerVisual> Patterns,
     ProjectionVisualField<ProjectionHeadAppearance> Appearance,
     ProjectionVisualField<ProjectionEntityVisual> DisplayEntity,
     ProjectionVisualField<IReadOnlyList<string>> PotSides,
+    ProjectionVisualField<IReadOnlyList<ProjectionPotSideVisual>> PotSideDetails,
     ProjectionVisualField<string> BedColor);
 
 internal static class ProjectionVisualStateAdapter
 {
     private static readonly string[] Dyes = ["white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
         "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"];
+    private static readonly IReadOnlyDictionary<string, string> LegacySignColorAliases =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["dark_blue"] = "blue",
+            ["dark_green"] = "green",
+            ["dark_aqua"] = "cyan",
+            ["dark_red"] = "red",
+            ["dark_purple"] = "purple",
+            ["gold"] = "orange",
+            ["dark_gray"] = "gray",
+            ["aqua"] = "cyan",
+            ["light_purple"] = "magenta"
+        };
 
     internal static ProjectionVisualState Adapt(ProjectionState state, ProjectionBlockEntityData? data,
-        int? sourceDataVersion, CancellationToken cancellationToken)
+        int? sourceDataVersion, CancellationToken cancellationToken, string? targetVersionId = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var profile = ProjectionVisualDataProfile.Select(sourceDataVersion);
@@ -50,10 +75,11 @@ internal static class ProjectionVisualStateAdapter
         ProjectionVisualField<T> Missing<T>() => ProjectionVisualField<T>.Unknown(reason);
         var sign = Missing<ProjectionSignVisual>();
         var items = Missing<IReadOnlyList<ProjectionItemVisual>>();
-        var patterns = Missing<IReadOnlyList<ProjectionPatternVisual>>();
+        var patterns = Missing<ProjectionBannerVisual>();
         var appearance = Missing<ProjectionHeadAppearance>();
         var entity = Missing<ProjectionEntityVisual>();
         var sides = Missing<IReadOnlyList<string>>();
+        var sideDetails = Missing<IReadOnlyList<ProjectionPotSideVisual>>();
         var bed = Missing<string>();
         if (payload is not null && profile.Schema != ProjectionVisualDataSchema.Unknown)
         {
@@ -61,18 +87,26 @@ internal static class ProjectionVisualStateAdapter
             // known contents into empty, or poison ordinary block geometry.
             sign = ReadSign(payload, profile.Sign, cancellationToken);
             items = ReadItems(payload, profile.Items, state, cancellationToken);
-            patterns = ReadPatterns(payload, profile, cancellationToken);
+            if (state.Name.Contains("banner", StringComparison.Ordinal))
+                patterns = ReadPatterns(payload, profile, state.Name, cancellationToken);
             var modern = profile.Head is ProjectionHeadDataSchema.ResolvableProfile or ProjectionHeadDataSchema.ProfileWithSkinPatch;
             appearance = ProjectionAppearanceAdapter.ReadHead(payload, modern, cancellationToken);
-            if (modern && payload.TryGetValue("profile", out var rawProfile) &&
-                (rawProfile is NbtString || profile.Head == ProjectionHeadDataSchema.ProfileWithSkinPatch &&
-                    rawProfile is NbtCompound head && new[] { "texture", "cape", "elytra", "model" }.Any(head.ContainsKey)))
-                appearance = ProjectionVisualField<ProjectionHeadAppearance>.Unknown("HeadProfileEncodingNotImplemented");
+            if (!modern && profile.Head == ProjectionHeadDataSchema.SkullOwner && payload.ContainsKey("Owner"))
+                appearance = ProjectionAppearanceAdapter.ReadHead(payload, false, cancellationToken);
             entity = ProjectionAppearanceAdapter.ReadEntity(payload, cancellationToken);
-            var potKey = profile.Pot == ProjectionPotDataSchema.Shards ? "shards" : "sherds";
-            if (profile.Pot == ProjectionPotDataSchema.NamedItemTemplates)
-                sides = ProjectionVisualField<IReadOnlyList<string>>.Unknown("NamedPotItemTemplatesNotImplemented");
-            else if ((profile.Pot is ProjectionPotDataSchema.Shards or ProjectionPotDataSchema.Sherds) && payload.GetList(potKey) is { } sherds)
+            var targetNamedPot = targetVersionId is "26.3" or "26.4-snapshot-6";
+            var potSchema = profile.Pot == ProjectionPotDataSchema.Unavailable && profile.DataVersion == 3120
+                ? ProjectionPotDataSchema.Unavailable : profile.Pot;
+            if (targetNamedPot && payload.ContainsKey("sherds") && potSchema != ProjectionPotDataSchema.NamedItemTemplates)
+            {
+                (sides, sideDetails) = ReadNamedPotSides(payload, cancellationToken);
+            }
+            else if (profile.Pot == ProjectionPotDataSchema.NamedItemTemplates)
+            {
+                (sides, sideDetails) = ReadNamedPotSides(payload, cancellationToken);
+            }
+            else if ((profile.Pot is ProjectionPotDataSchema.Shards or ProjectionPotDataSchema.Sherds) &&
+                payload.GetList(profile.Pot == ProjectionPotDataSchema.Shards ? "shards" : "sherds") is { } sherds)
             {
                 var values = sherds.OfType<NbtString>().Select(value => value.Value).ToArray();
                 if (sherds.Count > 4 || values.Length != sherds.Count || values.Any(value => !IsResourceId(value)))
@@ -85,6 +119,12 @@ internal static class ProjectionVisualStateAdapter
                     // decorated-pot side (minecraft:brick).
                     var padded = values.Concat(Enumerable.Repeat("minecraft:brick", 4 - values.Length)).ToArray();
                     sides = ProjectionVisualField<IReadOnlyList<string>>.Known(Array.AsReadOnly(padded));
+                    var adaptedSides = PadPotSides(values.Select((value, index) => new ProjectionPotSideVisual(
+                        PotSideName(index), value, profile.DataVersion == 3337 ? LegacyShardPattern(value) : PatternFromItem(value), null,
+                        value == "minecraft:brick" || value == "minecraft:brick_sherd" || value == "minecraft:brick_shard")).ToArray());
+                    if (targetNamedPot)
+                        adaptedSides = adaptedSides.Select(side => side with { PatternId = side.IsDefault ? null : side.PatternId }).ToArray();
+                    sideDetails = ProjectionVisualField<IReadOnlyList<ProjectionPotSideVisual>>.Known(Array.AsReadOnly(adaptedSides));
                 }
             }
             if (profile.Bed == ProjectionBedDataSchema.ColorNbt && payload.GetInt("color") is { } color)
@@ -99,7 +139,111 @@ internal static class ProjectionVisualStateAdapter
             bed = ProjectionVisualField<string>.Invalid("MissingBedColor");
         if (profile.Bed == ProjectionBedDataSchema.ColorNbt && payload is null)
             bed = ProjectionVisualField<string>.Unknown(reason);
-        return new(profile, sign, items, patterns, appearance, entity, sides, bed);
+        return new(profile, sign, items, patterns, appearance, entity, sides, sideDetails, bed);
+    }
+
+    private static (ProjectionVisualField<IReadOnlyList<string>> Sides,
+        ProjectionVisualField<IReadOnlyList<ProjectionPotSideVisual>> Details) ReadNamedPotSides(
+        NbtCompound payload, CancellationToken cancellationToken)
+    {
+        if (!payload.TryGetValue("sherds", out var raw))
+            return (ProjectionVisualField<IReadOnlyList<string>>.Unknown("MissingNamedPotSides"),
+                ProjectionVisualField<IReadOnlyList<ProjectionPotSideVisual>>.Unknown("MissingNamedPotSides"));
+        if (raw is not NbtCompound compound)
+            return (ProjectionVisualField<IReadOnlyList<string>>.Unknown("InvalidNamedPotSides"),
+                ProjectionVisualField<IReadOnlyList<ProjectionPotSideVisual>>.Invalid("InvalidNamedPotSides"));
+        var result = new List<ProjectionPotSideVisual>(4);
+        foreach (var (side, index) in new[] { ("back", 0), ("left", 1), ("right", 2), ("front", 3) })
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!compound.TryGetValue(side, out var value))
+            {
+                result.Add(new(side, null, null, null, true));
+                continue;
+            }
+            if (value is NbtString text && IsResourceId(text.Value))
+            {
+                var isDefault = text.Value is "minecraft:brick" or "minecraft:brick_sherd" or "minecraft:brick_shard";
+                result.Add(new(side, text.Value, PatternFromItem(text.Value), null, isDefault));
+                continue;
+            }
+            if (value is not NbtCompound item)
+                return (ProjectionVisualField<IReadOnlyList<string>>.Invalid("InvalidNamedPotSide"),
+                    ProjectionVisualField<IReadOnlyList<ProjectionPotSideVisual>>.Invalid("InvalidNamedPotSide"));
+            var itemId = item.GetString("id") ?? item.GetString("item");
+            if (itemId is null || !IsResourceId(itemId))
+                return (ProjectionVisualField<IReadOnlyList<string>>.Invalid("InvalidNamedPotItemId"),
+                    ProjectionVisualField<IReadOnlyList<ProjectionPotSideVisual>>.Invalid("InvalidNamedPotItemId"));
+            item.TryGetValue("components", out var componentTag);
+            var components = componentTag is null ? null : Copy(componentTag, cancellationToken);
+            var pattern = ComponentPattern(components);
+            var patternId = pattern.Present ? pattern.Id : PatternFromItem(itemId);
+            var defaultItem = pattern.Removed || !pattern.Present && itemId is
+                "minecraft:brick" or "minecraft:brick_sherd" or "minecraft:brick_shard";
+            result.Add(new(side, itemId, patternId, components, defaultItem, pattern.AssetId));
+        }
+        var details = Array.AsReadOnly(result.ToArray());
+        var ids = Array.AsReadOnly(result.Select(item => item.IsDefault ? "minecraft:brick" :
+            item.ItemId ?? item.PatternId ?? item.PatternAssetId ?? "minecraft:brick").ToArray());
+        return (ProjectionVisualField<IReadOnlyList<string>>.Known(ids),
+            ProjectionVisualField<IReadOnlyList<ProjectionPotSideVisual>>.Known(details));
+    }
+
+    private static ProjectionPotSideVisual[] PadPotSides(ProjectionPotSideVisual[] values)
+    {
+        if (values.Length > 4) throw new InvalidDataException("InvalidPotSides");
+        return values.Concat(Enumerable.Range(values.Length, 4 - values.Length)
+            .Select(index => new ProjectionPotSideVisual(PotSideName(index), null, null, null, true))).ToArray();
+    }
+
+    private static string PotSideName(int index) => index switch
+    {
+        0 => "back", 1 => "left", 2 => "right", _ => "front"
+    };
+
+    private static string? PatternFromItem(string? itemId)
+    {
+        // Vanilla item defaults are a finite table. A custom item's name is not
+        // evidence that it provides a pottery pattern.
+        if (itemId is null || !itemId.StartsWith("minecraft:", StringComparison.Ordinal)) return null;
+        var name = itemId["minecraft:".Length..];
+        if (!name.EndsWith("_pottery_sherd", StringComparison.Ordinal)) return null;
+        var pattern = name[..^"_pottery_sherd".Length];
+        if (pattern is "angler" or "archer" or "arms_up" or "blade" or "brewer" or "burn" or "danger" or
+            "explorer" or "flow" or "friend" or "guster" or "heart" or "heartbreak" or "howl" or "miner" or
+            "mourner" or "plenty" or "prize" or "scrape" or "sheaf" or "shelter" or "skull" or "snort")
+            return "minecraft:" + pattern;
+        return null;
+    }
+
+    private static string? LegacyShardPattern(string itemId) => itemId switch
+    {
+        "minecraft:archer_pottery_shard" => "minecraft:pottery_pattern_archer",
+        "minecraft:arms_up_pottery_shard" => "minecraft:pottery_pattern_arms_up",
+        "minecraft:prize_pottery_shard" => "minecraft:pottery_pattern_prize",
+        "minecraft:skull_pottery_shard" => "minecraft:pottery_pattern_skull",
+        _ => null
+    };
+
+    private static (bool Present, bool Removed, string? Id, string? AssetId) ComponentPattern(ProjectionVisualValue? components)
+    {
+        if (components?.Fields is not { } fields) return default;
+        // DataComponentPatch uses !component_id for an explicit removal.
+        if (fields.ContainsKey("!minecraft:provides_pottery_pattern") || fields.ContainsKey("!provides_pottery_pattern"))
+            return (true, true, null, null);
+        if (!fields.TryGetValue("minecraft:provides_pottery_pattern", out var value) &&
+            !fields.TryGetValue("provides_pottery_pattern", out value))
+            return default;
+        if (value.Kind == "String" && value.Scalar is { } scalar && IsResourceId(scalar))
+            return (true, false, scalar, null);
+        if (value.Fields?.GetValueOrDefault("asset_id")?.Scalar is { } asset && IsResourceId(asset))
+        {
+            // Inline Holder<DecoratedPotPattern> carries an asset_id, not a
+            // registry ID. Keep the distinction through Sprite resolution.
+            return (true, false, null, asset);
+        }
+        // An invalid explicit override must not silently resurrect item defaults.
+        return (true, false, null, null);
     }
 
     private static ProjectionVisualField<ProjectionSignVisual> ReadSign(NbtCompound payload, ProjectionSignDataSchema schema,
@@ -129,7 +273,21 @@ internal static class ProjectionVisualStateAdapter
                     return root.ValueKind == JsonValueKind.Object && root.EnumerateObject().Count() == 1 &&
                         root.TryGetProperty("text", out var plain) && plain.ValueKind == JsonValueKind.String && plain.GetString() == "";
                 }
-                var color = owner.GetString(legacy ? "Color" : "color") ?? "black";
+                var colorKey = legacy ? "Color" : "color";
+                var color = owner.TryGetValue(colorKey, out var rawColor)
+                    ? rawColor switch
+                    {
+                        NbtString text => text.Value,
+                        NbtByte number when legacy && number.Value is >= 0 and < 16 => Dyes[number.Value],
+                        NbtShort number when legacy && number.Value is >= 0 and < 16 => Dyes[number.Value],
+                        NbtInt number when legacy && number.Value is >= 0 and < 16 => Dyes[number.Value],
+                        _ => null
+                    }
+                    : "black";
+                if (color is null) throw new InvalidDataException("InvalidSignColor");
+                if ((schema is ProjectionSignDataSchema.SingleJson or ProjectionSignDataSchema.TwoSidedJson) &&
+                    LegacySignColorAliases.TryGetValue(color, out var alias))
+                    color = alias;
                 if (!Dyes.Contains(color)) throw new InvalidDataException("InvalidSignColor");
                 var glowing = ReadBool(owner, legacy ? "GlowingText" : "has_glowing_text");
                 var empty = true;
@@ -179,28 +337,50 @@ internal static class ProjectionVisualStateAdapter
         return ProjectionVisualField<IReadOnlyList<ProjectionItemVisual>>.Known(items.AsReadOnly());
     }
 
-    private static ProjectionVisualField<IReadOnlyList<ProjectionPatternVisual>> ReadPatterns(NbtCompound payload,
-        ProjectionVisualDataProfile profile, CancellationToken cancellationToken)
+    private static ProjectionVisualField<ProjectionBannerVisual> ReadPatterns(NbtCompound payload,
+        ProjectionVisualDataProfile profile, string stateName, CancellationToken cancellationToken)
     {
         var modern = profile.Banner == ProjectionBannerDataSchema.RegistryLayers;
         var key = modern ? "patterns" : "Patterns";
-        if (!payload.TryGetValue(key, out var raw)) return ProjectionVisualField<IReadOnlyList<ProjectionPatternVisual>>.Unknown("MissingBannerPatterns");
-        if (raw is not NbtList list) return ProjectionVisualField<IReadOnlyList<ProjectionPatternVisual>>.Invalid("InvalidBannerPatterns");
+        if (!payload.TryGetValue(key, out var raw)) return ProjectionVisualField<ProjectionBannerVisual>.Unknown("MissingBannerPatterns");
+        if (raw is not NbtList list) return ProjectionVisualField<ProjectionBannerVisual>.Invalid("InvalidBannerPatterns");
         var result = new List<ProjectionPatternVisual>();
         foreach (var value in list)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (value is not NbtCompound entry) return ProjectionVisualField<IReadOnlyList<ProjectionPatternVisual>>.Invalid("InvalidBannerPattern");
-            if (modern && entry.GetCompound("pattern") is not null)
-                return ProjectionVisualField<IReadOnlyList<ProjectionPatternVisual>>.Unknown("InlineBannerPatternNotImplemented");
+            if (result.Count >= 16) return ProjectionVisualField<ProjectionBannerVisual>.Invalid("TooManyBannerPatterns");
+            if (value is not NbtCompound entry) return ProjectionVisualField<ProjectionBannerVisual>.Invalid("InvalidBannerPattern");
+            if (modern && entry.GetCompound("pattern") is { } inline)
+            {
+                if (inline.GetString("asset_id") is not { } assetId || !IsResourceId(assetId))
+                    return ProjectionVisualField<ProjectionBannerVisual>.Unknown("InlineBannerPatternWithoutAssetId");
+                var inlineDye = entry.TryGetValue("color", out var inlineColor) ? ReadBannerColor(inlineColor) : null;
+                if (inlineDye is null || !Dyes.Contains(inlineDye))
+                    return ProjectionVisualField<ProjectionBannerVisual>.Invalid("InvalidBannerPatternColor");
+                result.Add(new(assetId, inlineDye));
+                continue;
+            }
             var pattern = entry.GetString(modern ? "pattern" : "Pattern");
-            var color = modern ? entry.GetString("color") : Integer(entry, "Color") is >= 0 and < 16 and var dye ? Dyes[profile.Banner == ProjectionBannerDataSchema.ShortCodeDamageColor ? 15 - dye : dye] : null;
+            var color = modern
+                ? entry.TryGetValue("color", out var colorValue) ? ReadBannerColor(colorValue) : null
+                : Integer(entry, "Color") is >= 0 and < 16 and var dye ? Dyes[profile.Banner == ProjectionBannerDataSchema.ShortCodeDamageColor ? 15 - dye : dye] : null;
             if (string.IsNullOrEmpty(pattern) || color is null || !Dyes.Contains(color))
-                return ProjectionVisualField<IReadOnlyList<ProjectionPatternVisual>>.Invalid("InvalidBannerPattern");
+                return ProjectionVisualField<ProjectionBannerVisual>.Invalid("InvalidBannerPattern");
             result.Add(new(pattern, color));
         }
-        return ProjectionVisualField<IReadOnlyList<ProjectionPatternVisual>>.Known(result.AsReadOnly());
+        var baseColor = stateName.Split(':', 2)[1].Split('_', 2)[0];
+        return Dyes.Contains(baseColor)
+            ? ProjectionVisualField<ProjectionBannerVisual>.Known(new(baseColor, result.AsReadOnly()))
+            : ProjectionVisualField<ProjectionBannerVisual>.Invalid("InvalidBannerBaseColor");
     }
+
+    private static string? ReadBannerColor(NbtTag value) => value switch
+    {
+        NbtString text when Dyes.Contains(text.Value) => text.Value,
+        NbtInt number when number.Value is >= 0 and < 16 => Dyes[number.Value],
+        NbtByte number when number.Value is >= 0 and < 16 => Dyes[number.Value],
+        _ => null
+    };
 
     private static int? Integer(NbtCompound owner, string key) => owner.TryGetValue(key, out var value) ? value switch
     { NbtInt number => number.Value, NbtByte number => number.Value, NbtShort number => number.Value, _ => null } : null;

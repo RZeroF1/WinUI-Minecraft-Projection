@@ -64,13 +64,7 @@ dotnet pack src/RZeroF1.Minecraft.Projection/RZeroF1.Minecraft.Projection.csproj
 
 Packages are written to `artifacts/packages/`. The native build uses ABI headers from a pinned `Microsoft.WindowsAppSDK.WinUI` package without adding a WinUI runtime dependency to the managed SDK assembly.
 
-Run the existing local validation projects with:
-
-```powershell
-dotnet run --project tests/RZeroF1.Minecraft.Projection.Tests/RZeroF1.Minecraft.Projection.Tests.csproj -c Release -r win-x64
-dotnet restore tests/PackageConsumer/PackageConsumer.csproj -r win-x64 --configfile tests/PackageConsumer/NuGet.Config -p:NuGetAudit=false
-dotnet run --project tests/PackageConsumer/PackageConsumer.csproj -c Release -r win-x64 --no-restore
-```
+Local test and package consumer projects are not tracked in Git. CI builds and packs the SDK, validates the closed package payload, and checks SourceLink metadata. Resource regression, package consumer checks, and visual verification run separately on the local machine.
 
 Compilation, automated tests, and visual inspection are separate checks. Native image-surface tests do not replace manual verification of WinUI rendering, Acrylic, or interaction.
 

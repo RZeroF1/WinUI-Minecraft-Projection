@@ -10,10 +10,6 @@ python .github/scripts/render-capabilities/build_spec.py '<内部研究根目录
 
 有意更新时移除 `--check`，审查生成的 JSON、Profile、来源摘要与配方变化，运行普通测试和相关基线比较。版本列表是封闭端点集，出现新版本必须先明确分类。工具使用 Python 标准库，无网络或 JAR/字节码读取，不包含原版实现。
 
-普通测试不依赖内部研究目录：
-
-```powershell
-dotnet run --project tests/RZeroF1.Minecraft.Projection.Tests/RZeroF1.Minecraft.Projection.Tests.csproj -c Release
-```
+普通测试与相关基线比较在本地执行；测试项目不纳入 Git 跟踪，也不作为远端 CI 的构建依赖。
 
 契约见 `docs/render-capabilities.md`。原版 JAR、映射、资源、日志、内部资料不进入 SDK 或包内容，现有包白名单继续保持。覆盖校验是证据台账门槛，不是画面正确率。

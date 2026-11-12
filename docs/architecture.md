@@ -58,7 +58,9 @@ WIC 将纹理解码为 RGBA 后上传到 GPU。截图从渲染器颜色纹理复
 
 P2 的特殊几何由不可变数值配方 `ProjectionPartRecipes` 与独立实例姿态组成，经 `ProjectionSpecialMeshBuilder` 输出到现有 `BatchBuilder`。Cuboid/Quad 统一处理逻辑 UV、面法线、镜像绕序、部件可见性、材质和 AABB。箱体单双件、床头尾、潜影盒六向、钟体、共享七部件 BookModel、陶罐四面和雕像四姿态共用此协议。特殊面没有邻面剔除，因此切片边界不重复上传它们；Native 世界平面处理越过源格的书本和雕像。源计数仍来自 `ProjectionDocument`。Double128 使用连续 UV，并将几何分配给原来的两个源格。
 
-`ProjectionSpriteResolver` 不持有 Native 句柄。Atlas 定义按资源层追加 source，纹理仍按既有优先级最后覆盖；解析结果以资源 Generation 归属，Reload 清除依赖。P2 支持 direct、directory、single、unstitch 和 filter 子集，区分 divisor 裁剪单位、模型画布与 PNG/首帧尺寸。色板派生、字体、Item special 和外部皮肤未实现。精确资源端点为 1.19.2/26.2/26.3，箱子另有 1.14.4 Double128 验收；其它端点显式未验证，不按相近版本推断支持。
+P3 的表面合成、Font/Glyph 和 Appearance 也通过上述生产链贡献网格与材质。资源身份、源数据 schema、部件几何和纹理布局分别适配，相同模型机制共用 recipe。旗帜合成按有序 layer 与资源 generation 缓存；陶罐按四个命名面选择完整 Sprite，并区分 registry ID 与 inline asset ID；头部膨胀只改变几何，帽层保留原始逻辑 UV 尺寸。专用模板缓存包含实例的 Pattern、文本或 Profile 内容摘要，避免同一 BlockState 的不同外观串用。Reload 清理派生纹理与解析缓存，现有材质、切片、上传和释放协议继续适用。生产贡献状态描述执行情况；已知的文字方向/布局缺陷及未完成的外观验收须独立记录，不能由 `Resolved` 或 GPU 读回存在性替代。
+
+`ProjectionSpriteResolver` 不持有 Native 句柄。Atlas 定义按资源层追加 source，纹理仍按既有优先级最后覆盖；解析结果以资源 Generation 归属，Reload 清除依赖。P2 支持 direct、directory、single、unstitch 和 filter 子集，区分 divisor 裁剪单位、模型画布与 PNG/首帧尺寸；P3 在此基础上增加派生表面与字体纹理。Atlas 色板派生、Item special 和外部账号皮肤未实现。P2 首批资源端点为 1.19.2/26.2/26.3，箱子另有 1.14.4 Double128 验收；P3 陶罐和固定头分别按其机制证据扩展，精确名单见 API 文档，不按相近版本推断支持。
 
 `ProjectionSession` 持有文档、资源归档、CPU 场景、切片缓存、相机及原生渲染器。连接后的原生渲染器持有目标的独立 COM 引用，拥有 D3D11 设备、上下文、交换链或颜色纹理、深度缓冲区及网格资源。
 

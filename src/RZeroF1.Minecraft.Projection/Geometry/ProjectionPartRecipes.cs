@@ -158,6 +158,27 @@ P("top", new(1, 16, 1), new(0, 0, 0),
 P("bottom", new(1, 0, 1), new(0, 0, 0),
             [C(new(0, 0, 0), new(14, 0, 14), new(-14, 13), "base", 32, 32, 0, false)],
             [])]));
+    internal static readonly ProjectionPartGraph BannerStanding = BannerStructure("BannerStanding", true);
+    internal static readonly ProjectionPartGraph BannerWall = BannerStructure("BannerWall", false);
+    // BannerRenderer moves the flag pivot to y=-32 before drawing it.
+    // Keep the cloth and support in the same model coordinate system.
+    internal static readonly ProjectionPartGraph BannerStandingSurface = BannerSurface("BannerStandingSurface", -10, -32, -2, 20, 40);
+    internal static readonly ProjectionPartGraph BannerWallSurface = BannerSurface("BannerWallSurface", -10, -32, -2, 20, 40);
+    internal static readonly ProjectionPartGraph StandingSignBoard = new("StandingSignBoard", P("root", Vector3.Zero, Vector3.Zero,
+        [],
+        [P("board", Vector3.Zero, Vector3.Zero,
+            [C(new(-12, -14, -1), new(24, 12, 2), new(0, 0), "base", 64, 32)], []),
+         P("stick", Vector3.Zero, Vector3.Zero,
+            [C(new(-1, -2, -1), new(2, 14, 2), new(0, 14), "base", 64, 32)], [])]));
+    internal static readonly ProjectionPartGraph HangingSignBoard = new("HangingSignBoard", P("root", Vector3.Zero, Vector3.Zero,
+        [C(new(-12, 5, -1), new(24, 9, 2), new(0, 2), "base", 64, 64),
+         C(new(-12, -8, -1), new(2, 13, 2), new(0, 0), "base", 64, 64),
+         C(new(10, -8, -1), new(2, 13, 2), new(4, 0), "base", 64, 64)], []));
+    internal static readonly ProjectionPartGraph ModernHangingSignChains = HangingChains();
+    internal static readonly ProjectionPartGraph HumanoidSkull = Skull("HumanoidSkull", 64, 64, true, false);
+    internal static readonly ProjectionPartGraph MobSkull = Skull("MobSkull", 64, 32, false, true);
+    internal static readonly ProjectionPartGraph DragonSkull = Dragon();
+    internal static readonly ProjectionPartGraph PiglinSkull = Piglin();
     internal static readonly ProjectionPartGraph PotSides = new("PotSides", P("root", new(0, 0, 0), new(0, 0, 0),
         [],
         [P("back", new(15, 16, 1), new(0, 0, 3.141593f),
@@ -297,6 +318,103 @@ P("left_leg", new(1, -5, 0), new(0, 0, 0),
     internal static readonly ProjectionPartGraph BedHeadVisibleFaces = VisibleBedFaces(BedHead, true);
     internal static readonly ProjectionPartGraph BedFootVisibleFaces = VisibleBedFaces(BedFoot, false);
     internal static readonly ProjectionPartGraph BookPlanar = PlanarBook();
+
+    private static ProjectionPartGraph BannerSurface(string name, float x, float y, float z, float width, float height)
+    {
+        var surface = ProjectionGeometryBuilder.Part("surface", ProjectionPose.Identity,
+            [new ProjectionCuboid(
+                new Vector3(x, y, z) / 16,
+                new Vector3(x + width, y + height, z + 1) / 16,
+                new ProjectionMaterialRequest("surface", ProjectionMaterialRole.Cutout, 64, 64,
+                    "Vanilla 64x64 BannerModel 20x40x1 cube atlas layout"),
+                Vector4.Zero, Shade: false, UvSize: new(width, height, 1))]);
+        return ProjectionGeometryBuilder.FromRoot(name, new("root", ProjectionPose.Identity, [], [], [surface]));
+    }
+
+    private static ProjectionPartGraph BannerStructure(string name, bool standing)
+    {
+        var nodes = new List<ProjectionPartNode>();
+        if (standing)
+            nodes.Add(ProjectionGeometryBuilder.Part("pole", ProjectionPose.Identity,
+                [C(new(-1, -30, -1), new(2, 42, 2), new(44, 0), "base", 64, 64)]));
+        nodes.Add(ProjectionGeometryBuilder.Part("bar", ProjectionPose.Identity,
+            [C(new(-10, -32, -1), new(20, 2, 2), new(0, 42), "base", 64, 64)]));
+        return ProjectionGeometryBuilder.Graph(name, [.. nodes]);
+    }
+
+    private static ProjectionPartGraph HangingChains()
+    {
+        ProjectionPartNode Chain(string name, Vector3 origin, float zRotation) =>
+            ProjectionGeometryBuilder.Part(name, new(origin, new(0, 0, zRotation), Vector3.Zero, Vector3.One, false, false, false),
+                [new ProjectionCuboid(new Vector3(-1.5f, 0, 0) / 16, new Vector3(1.5f, 6, 0) / 16,
+                    new("base", ProjectionMaterialRole.Cutout, 16, 16, "Audited hanging-sign chain"),
+                    new(0, 0, 0, 0), Shade: false, UvSize: new(3, 6, 0))]);
+        var root = new ProjectionPartNode("root", ProjectionPose.Identity, [], [], [
+            Chain("chainL1", new Vector3(-5, 26, 0) / 16, -.785398f), Chain("chainL2", new Vector3(-5, 26, 0) / 16, .785398f),
+            Chain("chainR1", new Vector3(5, 26, 0) / 16, -.785398f), Chain("chainR2", new Vector3(5, 26, 0) / 16, .785398f),
+            ProjectionGeometryBuilder.Part("vChains", ProjectionPose.Identity,
+                [new ProjectionCuboid(new Vector3(-6, 20, 0) / 16, new Vector3(6, 26, 0) / 16,
+                    new("base", ProjectionMaterialRole.Cutout, 16, 16, "Audited hanging-sign V chain"),
+                    new(14, 6, 0, 0), Shade: false, UvSize: new(12, 6, 0))])]);
+        return ProjectionGeometryBuilder.FromRoot("ModernHangingSignChains", root);
+    }
+
+    private static ProjectionPartGraph Skull(string name, int width, int height, bool hat, bool mob)
+    {
+        var headFrom = mob ? new Vector3(-4, -8, -4) / 16 : new Vector3(-4, -8, -4) / 16;
+        var headTo = new Vector3(4, 0, 4) / 16;
+        var head = ProjectionGeometryBuilder.Part("head", ProjectionPose.Identity,
+            [SkullBox(headFrom, headTo, new ProjectionMaterialRequest("base", ProjectionMaterialRole.Cutout, width, height, "Audited static skull head"), Vector2.Zero)]);
+        var parts = new List<ProjectionPartNode> { head };
+        if (hat)
+        {
+            var hatMaterial = new ProjectionMaterialRequest("base", ProjectionMaterialRole.Blend, width, height, "Humanoid outer head layer");
+            var hatPart = new ProjectionPartNode("hat", ProjectionPose.Identity,
+                [SkullBox(headFrom - new Vector3(.25f / 16), headTo + new Vector3(.25f / 16), hatMaterial, new(32, 0))], [], []);
+            parts.Add(hatPart);
+        }
+        return ProjectionGeometryBuilder.Graph(name, [.. parts]);
+    }
+
+    private static ProjectionCuboid SkullBox(Vector3 from, Vector3 to, ProjectionMaterialRequest material, Vector2 uvOrigin) =>
+        // CubeDeformation changes geometry only; the skin still contains 8x8 faces.
+        new(from, to, material, new(uvOrigin.X, uvOrigin.Y, 0, 0), Shade: false, UvSize: new(8));
+
+    private static ProjectionPartGraph Dragon()
+    {
+        var skull = P("skull", Vector3.Zero, Vector3.Zero,
+            [C(new(-8, -8, -10), new(16, 16, 16), new(112, 30), "base", 256, 256)], []);
+        var upperLip = P("upperLip", Vector3.Zero, Vector3.Zero,
+            [C(new(-6, -1, -24), new(12, 5, 16), new(176, 44), "base", 256, 256)], []);
+        var scales = P("scales", Vector3.Zero, Vector3.Zero,
+            [C(new(-5, -12, -4), new(2, 4, 6), new(0, 0), "base", 256, 256, mirror: true),
+             C(new(3, -12, -4), new(2, 4, 6), new(0, 0), "base", 256, 256)], []);
+        var nostrils = P("nostrils", Vector3.Zero, Vector3.Zero,
+            [C(new(-5, -3, -22), new(2, 2, 4), new(112, 0), "base", 256, 256, mirror: true),
+             C(new(3, -3, -22), new(2, 2, 4), new(112, 0), "base", 256, 256)], []);
+        var jaw = P("jaw", new(0, 4, -8), new(.2f, 0, 0),
+            [C(new(-6, 0, -16), new(12, 4, 16), new(176, 65), "base", 256, 256)], []);
+        // PartPose.scaled also scales the offset; this matches the older renderer's
+        // translate(0, -0.3743749857, 0), scale(0.75) sequence.
+        var head = new ProjectionPartNode("head", new(Vector3.Zero, Vector3.Zero, new Vector3(0, -7.9866662f * .75f, 0) / 16,
+            new(.75f), false, false, false), [], [], [skull, upperLip, scales, nostrils, jaw]);
+        return ProjectionGeometryBuilder.FromRoot("DragonSkull", new("root", ProjectionPose.Identity, [], [], [head]));
+    }
+
+    private static ProjectionPartGraph Piglin()
+    {
+        var head = ProjectionGeometryBuilder.Part("head", ProjectionPose.Identity,
+            [C(new(-5, -8, -4), new(10, 8, 8), new(0, 0), "base", 64, 64),
+             C(new(-2, -4, -5), new(4, 4, 1), new(31, 1), "base", 64, 64),
+             C(new(2, -2, -5), new(1, 2, 1), new(2, 4), "base", 64, 64),
+             C(new(-3, -2, -5), new(1, 2, 1), new(2, 0), "base", 64, 64)]);
+        // setupAnim at animation position zero: +/- (cos(0) + 2.5) * 0.2.
+        var leftEar = P("rightEar", new(-4.5f, -6, 0), new(0, 0, .7f),
+            [C(new(-1, 0, -2), new(1, 5, 4), new(39, 6), "base", 64, 64)], []);
+        var rightEar = P("leftEar", new(4.5f, -6, 0), new(0, 0, -.7f),
+            [C(new(0, 0, -2), new(1, 5, 4), new(51, 6), "base", 64, 64)], []);
+        return ProjectionGeometryBuilder.Graph("PiglinSkull", [head, leftEar, rightEar]);
+    }
 
     private static ProjectionPartGraph PlanarBook()
     {

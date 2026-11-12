@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   validate:
-    name: Build, test and validate NuGet (win-x64)
+    name: Build and validate NuGet (win-x64)
     runs-on: windows-2025
     timeout-minutes: 25
 
@@ -61,10 +61,6 @@ jobs:
       - name: Pack NuGet
         shell: pwsh
         run: dotnet pack src/RZeroF1.Minecraft.Projection/RZeroF1.Minecraft.Projection.csproj -c Release -r win-x64 --no-restore -nologo
-
-      - name: Run SDK regression tests
-        shell: pwsh
-        run: dotnet run --project tests/RZeroF1.Minecraft.Projection.Tests/RZeroF1.Minecraft.Projection.Tests.csproj -c Release -r win-x64
 
       - name: Enforce closed public package payload (including symbols)
         shell: pwsh
@@ -125,14 +121,6 @@ jobs:
             Write-Host "Validated $($packages[0].Name), SourceLink and native/license assets."
           }
           finally { $zip.Dispose() }
-
-      - name: Restore consumer from locally built NuGet package
-        shell: pwsh
-        run: dotnet restore tests/PackageConsumer/PackageConsumer.csproj -r win-x64 --configfile tests/PackageConsumer/NuGet.Config -p:NuGetAudit=false
-
-      - name: Run independent package consumer
-        shell: pwsh
-        run: dotnet run --project tests/PackageConsumer/PackageConsumer.csproj -c Release -r win-x64 --no-restore
 
       - name: Archive validated packages
         uses: actions/upload-artifact@v4

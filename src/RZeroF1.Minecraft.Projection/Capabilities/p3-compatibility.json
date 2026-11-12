@@ -1,0 +1,101 @@
+{
+  "schema": 1,
+  "evidenceId": "p3-production-mechanisms-2026-11-08",
+  "groups": [
+    {
+      "id": "banner.static-surface",
+      "recipes": [
+        "BannerRenderer"
+      ],
+      "geometry": "BannerSurface",
+      "resources": "Banner64",
+      "versions": [
+        "1.19.2",
+        "26.2",
+        "26.3"
+      ],
+      "evidenceSha256": "72ba3f1856bb339d3890bdeb94641fb48f9dbfbf6906c39dcca25cfc7e852581"
+    },
+    {
+      "id": "sign.legacy-board-text",
+      "recipes": [
+        "SignRenderer"
+      ],
+      "geometry": "SignBoard",
+      "resources": "Sign64",
+      "versions": [
+        "1.19.2"
+      ],
+      "evidenceSha256": "1e16d0fcd8a07884c713d44c7c3c5a6381d4c2de2f93f51e784dadb5be118049"
+    },
+    {
+      "id": "sign.modern-text",
+      "recipes": [
+        "StandingSignRenderer"
+      ],
+      "geometry": "SignText",
+      "resources": "SignBlockModel",
+      "versions": [
+        "26.2",
+        "26.3"
+      ],
+      "evidenceSha256": "5a1229ff28362d74f74f078248a819c8d495ba90f289072989a7d319d3b1b3bb"
+    },
+    {
+      "id": "hanging-sign.legacy-board-text",
+      "recipes": [
+        "HangingSignRenderer"
+      ],
+      "geometry": "HangingSignBoard",
+      "resources": "HangingSign64",
+      "versions": [
+        "1.19.4"
+      ],
+      "evidenceSha256": "9fd3783318d8feb784d5369586403cf52dc98667af34663ebae4255de290a4d9"
+    },
+    {
+      "id": "hanging-sign.modern-text",
+      "recipes": [
+        "HangingSignRenderer"
+      ],
+      "geometry": "HangingSignText",
+      "resources": "HangingSignBlockModel",
+      "versions": [
+        "26.2",
+        "26.3"
+      ],
+      "evidenceSha256": "15ab61f2e87e5467ef7850f9826c4a99be5adc738589a33325cbee8c8d85c296"
+    },
+    {
+      "id": "skull.shared-static-head-v2",
+      "recipes": [
+        "SkullBlockRenderer"
+      ],
+      "geometry": "SkullHead",
+      "resources": "SkullTextures",
+      "versions": [
+        "1.17.1",
+        "1.17",
+        "1.18.2",
+        "1.18",
+        "1.19.2",
+        "1.19.4",
+        "1.19",
+        "1.20.6",
+        "1.20",
+        "1.21.1",
+        "1.21.11",
+        "1.21.3",
+        "1.21.4",
+        "1.21.5",
+        "1.21",
+        "26.1.2",
+        "26.1",
+        "26.2",
+        "26.3",
+        "26.4-snapshot-6"
+      ],
+      "evidenceSha256": "2ee796cc7a3bd910b8aba89248aa1dcc6b7b87f55a6aa0f05ac3a67574561388"
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace RZeroF1.Minecraft.Projection;
@@ -39,7 +40,10 @@ internal sealed partial class ProjectionModelBaker
             cancellationToken.ThrowIfCancellationRequested();
             var state = document.Palette[block.StateIndex];
             var planInput = ProjectionRenderPlanResolver.Describe(document, block, state, _profile, cancellationToken);
-            var specialKey = state.Key + "|" + planInput.Visual.BedColor.Status + ":" + planInput.Visual.BedColor.Value;
+            var specialKey = state.Key + "|" + (planInput.Profile.Client.Version?.Id ?? planInput.Profile.Client.RequestedVersion) + "|" + planInput.Profile.Source.DataVersion + "|" +
+                planInput.Visual.BedColor.Status + ":" + planInput.Visual.BedColor.Value + "|" +
+                string.Join(";", planInput.Visual.PotSideDetails.Value?.Select(side => $"{side.Side}:{side.ItemId}:{side.PatternId}:{side.PatternAssetId}:{side.IsDefault}") ?? []) +
+                SpecialAppearanceKey(planInput);
             if (!_specialTemplates.TryGetValue(specialKey, out var special))
             {
                 special = ProjectionSpecialModelProducer.TryBuild(state, planInput, _resources, cancellationToken);
@@ -168,6 +172,29 @@ internal sealed partial class ProjectionModelBaker
         }
     }
 
+    private static string SpecialAppearanceKey(ProjectionRenderPlanInput input)
+    {
+        // The template cache is per document/resource generation, but two
+        // instances of the same state may carry different visible BE contents.
+        object? value = input.Declaration.Recipe switch
+        {
+            // An enumerable DTO serializes as its layers; retain the base color
+            // and field status explicitly in the appearance cache identity.
+            "BannerRenderer" => new
+            {
+                input.Visual.Patterns.Status,
+                input.Visual.Patterns.Evidence,
+                BaseColor = input.Visual.Patterns.Value?.BaseColor,
+                Layers = input.Visual.Patterns.Value?.Layers
+            },
+            "SignRenderer" or "StandingSignRenderer" or "HangingSignRenderer" => input.Visual.Sign,
+            "SkullBlockRenderer" => input.Visual.Appearance,
+            _ => null
+        };
+        return value is null ? "" : "|" + Convert.ToHexString(SHA256.HashData(
+            JsonSerializer.SerializeToUtf8Bytes(value, value.GetType())));
+    }
+
     private static ProjectionContributionBounds WorldBounds(ProjectionContributionBounds bounds, ProjectionPosition position) =>
         new(bounds.Minimum + new Vector3(position.X, position.Y, position.Z),
             bounds.Maximum + new Vector3(position.X, position.Y, position.Z));
@@ -183,7 +210,9 @@ internal sealed partial class ProjectionModelBaker
         if (plan.Declaration.Status != ProjectionDeclarationStatus.Known)
             Diagnose(input.Block, input.State, $"Capability.{plan.Assessment.Result}.{plan.Declaration.Status}");
         foreach (var contribution in plan.Assessment.Contributions)
-            if (contribution.Requirement.Kind != ProjectionContributionKind.BlockModel && contribution.State is
+            if (contribution.Requirement.Kind != ProjectionContributionKind.BlockModel &&
+                !(contribution.Requirement.Kind == ProjectionContributionKind.SurfacePatterns &&
+                    contribution.State is ProjectionContributionState.Resolved or ProjectionContributionState.KnownEmpty) && contribution.State is
                 ProjectionContributionState.Unsupported or ProjectionContributionState.UnknownData or ProjectionContributionState.ResourceFailure or ProjectionContributionState.StaticLimited)
                 Diagnose(input.Block, input.State, $"Capability.{plan.Assessment.Result}.{contribution.Requirement.Kind}.{contribution.State}");
     }

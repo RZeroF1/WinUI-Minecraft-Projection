@@ -47,6 +47,7 @@ internal sealed record ProjectionVisualDataProfile(int? DataVersion, ProjectionV
     internal ProjectionHeadDataSchema Head => Schema == ProjectionVisualDataSchema.Unknown
         ? ProjectionHeadDataSchema.Unknown : DataVersion switch
         {
+            3120 => ProjectionHeadDataSchema.SkullOwner,
             4671 or 4786 or 4790 or 4903 or 5023 or 5126 => ProjectionHeadDataSchema.ProfileWithSkinPatch,
             3839 or 3953 or 3955 or 4082 or 4189 or 4325 => ProjectionHeadDataSchema.ResolvableProfile,
             _ => ProjectionHeadDataSchema.SkullOwner

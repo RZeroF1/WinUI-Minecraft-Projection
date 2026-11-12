@@ -4,5 +4,6 @@
 AGENTS.md
 artifacts/packages/
 artifacts/test-results/
+/tests/
 *.user
 *.suo

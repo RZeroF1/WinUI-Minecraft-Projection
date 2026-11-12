@@ -1,10 +1,14 @@
 using System.Buffers.Binary;
+using System.Text;
+using System.Text.Json;
 using MinecraftRenderer.Nbt;
 
 namespace RZeroF1.Minecraft.Projection;
 
 internal sealed record ProjectionProfileProperty(string Name, string Value, string? Signature);
-internal sealed record ProjectionHeadAppearance(string? Name, string? Uuid, IReadOnlyList<ProjectionProfileProperty> Properties);
+internal sealed record ProjectionTexturePatch(string? Texture, string? Cape, string? Elytra, string? Model);
+internal sealed record ProjectionHeadAppearance(string? Name, string? Uuid, IReadOnlyList<ProjectionProfileProperty> Properties,
+    ProjectionTexturePatch? TexturePatch = null, string? TextureUrl = null);
 internal sealed record ProjectionEntityVisual(string Id, ProjectionVisualValue Data);
 
 internal static class ProjectionAppearanceAdapter
@@ -12,9 +16,15 @@ internal static class ProjectionAppearanceAdapter
     internal static ProjectionVisualField<ProjectionHeadAppearance> ReadHead(NbtCompound payload, bool modern, CancellationToken cancellationToken)
     {
         var key = modern ? "profile" : "SkullOwner";
-        if (!payload.TryGetValue(key, out var raw)) return ProjectionVisualField<ProjectionHeadAppearance>.Unknown("Missing" + key);
-        if (!modern && raw is NbtString { Value.Length: > 0 } nameOnly)
+        if (!payload.TryGetValue(key, out var raw))
+        {
+            if (!modern && payload.TryGetValue("Owner", out var legacyOwner)) raw = legacyOwner;
+            else if (!modern) return ProjectionVisualField<ProjectionHeadAppearance>.Unknown("Missing" + key);
+            else return ProjectionVisualField<ProjectionHeadAppearance>.Unknown("Missing" + key);
+        }
+        if (raw is NbtString { Value.Length: > 0 } nameOnly)
             return ProjectionVisualField<ProjectionHeadAppearance>.Known(new(nameOnly.Value, null, []));
+        if (raw is NbtString) return ProjectionVisualField<ProjectionHeadAppearance>.Invalid("EmptyHeadProfileName");
         if (raw is not NbtCompound profile) return ProjectionVisualField<ProjectionHeadAppearance>.Invalid("InvalidHeadProfile");
         try
         {
@@ -59,11 +69,46 @@ internal static class ProjectionAppearanceAdapter
                     }
                 else throw new InvalidDataException("InvalidHeadProperties");
             }
+            var patch = modern ? ReadPatch(profile) : null;
+            var textureUrl = result.FirstOrDefault(property => property.Name == "textures") is { } textures
+                ? ReadTextureUrl(textures.Value)
+                : null;
             return name is null && uuid is null && result.Count == 0
-                ? ProjectionVisualField<ProjectionHeadAppearance>.Unknown("EmptyHeadIdentity")
-                : ProjectionVisualField<ProjectionHeadAppearance>.Known(new(name, uuid, result.AsReadOnly()));
+                ? patch is null && textureUrl is null
+                    ? ProjectionVisualField<ProjectionHeadAppearance>.Unknown("EmptyHeadIdentity")
+                    : ProjectionVisualField<ProjectionHeadAppearance>.Known(new(name, uuid, result.AsReadOnly(), patch, textureUrl))
+                : ProjectionVisualField<ProjectionHeadAppearance>.Known(new(name, uuid, result.AsReadOnly(), patch, textureUrl));
         }
         catch (InvalidDataException exception) { return ProjectionVisualField<ProjectionHeadAppearance>.Invalid(exception.Message); }
+    }
+
+    private static ProjectionTexturePatch? ReadPatch(NbtCompound profile)
+    {
+        string? Text(string key)
+        {
+            if (!profile.TryGetValue(key, out var raw)) return null;
+            return raw is NbtString value ? value.Value : raw is NbtCompound compound
+                ? compound.GetString("id") ?? compound.GetString("path") ?? compound.GetString("asset")
+                : null;
+        }
+        var patch = new ProjectionTexturePatch(Text("texture"), Text("cape"), Text("elytra"), Text("model"));
+        return patch.Texture is null && patch.Cape is null && patch.Elytra is null && patch.Model is null ? null : patch;
+    }
+
+    private static string? ReadTextureUrl(string encoded)
+    {
+        try
+        {
+            var normalized = encoded.Replace('-', '+').Replace('_', '/');
+            normalized = normalized.PadRight(normalized.Length + (4 - normalized.Length % 4) % 4, '=');
+            using var document = JsonDocument.Parse(Convert.FromBase64String(normalized));
+            return document.RootElement.TryGetProperty("textures", out var textures) &&
+                textures.TryGetProperty("SKIN", out var skin) && skin.TryGetProperty("url", out var url)
+                ? url.GetString()
+                : null;
+        }
+        catch (FormatException) { return null; }
+        catch (JsonException) { return null; }
     }
 
     internal static ProjectionVisualField<ProjectionEntityVisual> ReadEntity(NbtCompound payload, CancellationToken cancellationToken)

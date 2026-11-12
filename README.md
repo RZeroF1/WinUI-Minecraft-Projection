@@ -10,9 +10,11 @@
 
 支持 Litematica `.litematic` 与 Sponge `.schem`。托管程序集面向 `net10.0`，不依赖托管 UI 框架；原生渲染器目前仅支持 Windows x64。
 
-内部保留 Litematic、Sponge v2/v3 的 Block Entity 数据，并分别识别源 DataVersion 和实际客户端资源 Profile。每个源方块可组合普通模型、专用主体和附加贡献；已有底座而缺少文字、物品或效果时报告 `Partial`，保留底座。数据未知、已知为空、资源失败和未实现具有不同状态。此阶段未增加箱子、床、潜影盒等专用几何，详见 [诊断与数据契约](docs/api.md)。
+内部保留 Litematic、Sponge v2/v3 的 Block Entity 数据，并分别识别源 DataVersion 和实际客户端资源 Profile。每个源方块可组合普通模型、专用主体和附加贡献；已有底座而缺少文字、物品或效果时报告 `Partial`，保留底座。数据未知、已知为空、资源失败和未实现具有不同状态，详见 [诊断与数据契约](docs/api.md)。
 
-P2 已加入共享部件姿态、逻辑 UV、Sprite source 子集和 Opaque/Cutout/Blend 材质角色。已验收资源端点 1.19.2、26.2、26.3 的箱子、潜影盒、实体床（仅旧版路由）、钟、共享书本、陶罐基础和铜傀儡四姿态可生成 CPU/D3D11 几何；另验收 1.14.4 Double128 箱子。其它登记端点不自动取得 P2 支持。动态开合、摆动和翻页标为 `StaticLimited`；陶罐图案合成、字体、物品/实体子视图和完整动画仍属于后续阶段。
+P2 已加入共享部件姿态、逻辑 UV、Sprite source 子集和 Opaque/Cutout/Blend 材质角色。已验收资源端点 1.19.2、26.2、26.3 的箱子、潜影盒、实体床（仅旧版路由）、钟、共享书本、陶罐基础和铜傀儡四姿态可生成 CPU/D3D11 几何；另验收 1.14.4 Double128 箱子。其它登记端点按机制证据逐项扩展。动态开合、摆动和翻页标为 `StaticLimited`。
+
+P3 已将旗帜有序图案、陶罐四面 Sprite、字体资源解析和静态头颅接入共用生产流程。陶罐的 CPU/资源测试覆盖 14 个精确客户端，其中 8 个有 D3D11 图像；固定生物头的共享模型、逻辑纹理画布、16 档地面旋转及四向墙挂在 20 个精确客户端完成 CPU/资源验证，具体名单见 API 文档。旗帜专项资源端点为 1.19.2、26.2、26.3。告示牌/悬挂牌仍有单个字符翻转及贴板布局缺陷；账号皮肤下载、完整文字排版、原版材质与动态等价、物品/实体子视图仍有未支持范围。已登记客户端和代表端点测试不代表全版本兼容。
 
 ## 安装与接入
 
@@ -64,13 +66,7 @@ dotnet pack src/RZeroF1.Minecraft.Projection/RZeroF1.Minecraft.Projection.csproj
 
 包输出至 `artifacts/packages/`。原生构建使用固定版本 `Microsoft.WindowsAppSDK.WinUI` 包中的 ABI 头文件，不向 SDK 程序集引入 WinUI 运行时依赖。
 
-已有本地验证项目可执行：
-
-```powershell
-dotnet run --project tests/RZeroF1.Minecraft.Projection.Tests/RZeroF1.Minecraft.Projection.Tests.csproj -c Release -r win-x64
-dotnet restore tests/PackageConsumer/PackageConsumer.csproj -r win-x64 --configfile tests/PackageConsumer/NuGet.Config -p:NuGetAudit=false
-dotnet run --project tests/PackageConsumer/PackageConsumer.csproj -c Release -r win-x64 --no-restore
-```
+本地测试与包消费者项目不纳入 Git 跟踪。CI 执行 SDK 构建、打包、包内容白名单和 SourceLink 元数据检查；资源回归、包消费者及实际画面验证在本地独立执行。
 
 编译、自动测试和实际画面检查是不同的验证步骤。原生图像表面测试不替代 WinUI 画面、亚克力及交互的人工检查。
 

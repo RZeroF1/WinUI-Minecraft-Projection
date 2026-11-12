@@ -8,6 +8,9 @@ internal sealed record ProjectionTextureImage(byte[] Png, bool HasTransparency, 
 internal static class ProjectionTextureLoader
 {
     internal static readonly byte[] MissingPng = CreateMissing();
+    internal static int DecodePng(byte[] png, out nint pixels, out uint width, out uint height) =>
+        Decode(png, (uint)png.Length, out pixels, out width, out height);
+    internal static void FreePng(nint pixels) => Free(pixels);
 
     internal static ProjectionTextureImage Load(byte[]? png, byte[]? metadata)
     {

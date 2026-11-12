@@ -90,7 +90,7 @@ internal sealed class ProjectionSpecialMeshBuilder(Matrix4x4 transform)
     }
 
     internal void AddQuadLogical(IReadOnlyList<Vector3> positions, ProjectionMaterialRequest material,
-        IReadOnlyList<Vector2> logicalUv, bool shade = false, bool doubleSided = false)
+        IReadOnlyList<Vector2> logicalUv, bool shade = false, bool doubleSided = false, uint? color = null)
     {
         if (positions.Count != 4 || logicalUv.Count != 4)
             throw new ArgumentException("A projection quad requires four positions and four UV coordinates.");
@@ -113,7 +113,7 @@ internal sealed class ProjectionSpecialMeshBuilder(Matrix4x4 transform)
                 Normal = normal,
                 Uv = new(material.SpriteU0 + uv.X / material.LogicalWidth * uSpan,
                     material.SpriteV0 + uv.Y / material.LogicalHeight * vSpan),
-                Color = shade ? Shade(normal) : 0xffffffff
+                Color = color ?? (shade ? Shade(normal) : 0xffffffff)
             });
         }
         if (mirrored)
@@ -142,7 +142,8 @@ internal sealed class ProjectionSpecialMeshBuilder(Matrix4x4 transform)
     internal static IReadOnlyList<ProjectionSpecialPrimitive> Bake(ProjectionPartGraph graph,
         ProjectionPose instancePose, CancellationToken cancellationToken,
         IReadOnlyDictionary<string, ProjectionMaterialRequest>? materials = null,
-        IReadOnlyDictionary<string, ProjectionPose>? poses = null, Matrix4x4? instanceMatrix = null)
+        IReadOnlyDictionary<string, ProjectionPose>? poses = null, Matrix4x4? instanceMatrix = null,
+        IReadOnlySet<string>? visibleParts = null)
     {
         var output = new ProjectionSpecialMeshBuilder(Matrix4x4.Identity);
         Walk(graph.Root, instanceMatrix ?? instancePose.Matrix);
@@ -152,6 +153,11 @@ internal sealed class ProjectionSpecialMeshBuilder(Matrix4x4 transform)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!node.Visible) return;
+            if (visibleParts is not null && node.Cuboids.Count > 0 && !visibleParts.Contains(node.Name))
+            {
+                foreach (var child in node.Children) Walk(child, node.Pose.Matrix * parent);
+                return;
+            }
             var pose = poses is not null && poses.TryGetValue(node.Name, out var overridePose) ? overridePose : node.Pose;
             var matrix = pose.Matrix * parent;
             var part = new ProjectionSpecialMeshBuilder(matrix);

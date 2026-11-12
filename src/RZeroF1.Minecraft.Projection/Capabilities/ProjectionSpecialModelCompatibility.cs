@@ -6,13 +6,15 @@ namespace RZeroF1.Minecraft.Projection;
 internal enum ProjectionSpecialGeometry
 {
     ChestDouble128, ChestSplit, ChestSplitHiddenSeam, ShulkerShell,
-    EntityBed, EntityBedVisibleFaces, BellBody, BookPlanar, BookThin, PotBase, StatuePoses
+    EntityBed, EntityBedVisibleFaces, BellBody, BookPlanar, BookThin, PotBase, StatuePoses,
+    BannerSurface, SignBoard, SignText, HangingSignBoard, HangingSignText, SkullHead
 }
 
 internal enum ProjectionSpecialResources
 {
     ChestDouble128, ChestSplit64, Shulker64, BedColorId, Bell32,
-    BookLegacy, BookEnchantment, PotBase32Side16, CopperGolem64Legacy, CopperGolem64Modern
+    BookLegacy, BookEnchantment, PotBase32Side16, CopperGolem64Legacy, CopperGolem64Modern,
+    Banner64, Sign64, SignBlockModel, HangingSign64, HangingSignBlockModel, SkullTextures
 }
 
 internal sealed record ProjectionSpecialModelProfile(
@@ -91,6 +93,65 @@ internal static class ProjectionSpecialModelCompatibility
             ("DecoratedPotRenderer", ProjectionSpecialGeometry.PotBase, ProjectionSpecialResources.PotBase32Side16) => true,
             ("CopperGolemStatueBlockRenderer", ProjectionSpecialGeometry.StatuePoses,
                 ProjectionSpecialResources.CopperGolem64Legacy or ProjectionSpecialResources.CopperGolem64Modern) => true,
+            _ => false
+        };
+}
+
+// P3 memberships are deliberately separate from the P2 specification. They
+// describe only the static contribution currently produced by the SDK; the
+// resource/data axes remain selected independently by the existing profiles.
+internal static class ProjectionP3SpecialModelCompatibility
+{
+    private static readonly FrozenDictionary<(string Version, string Recipe), ProjectionSpecialModelProfile> Memberships = Load();
+
+    internal static ProjectionSpecialModelProfile? Select(ProjectionVersionSelection client, string? recipe) =>
+        client.Status == ProjectionVersionStatus.Verified && client.Version is { } version && recipe is not null
+            ? Memberships.GetValueOrDefault((version.Id, recipe)) : null;
+
+    private static FrozenDictionary<(string Version, string Recipe), ProjectionSpecialModelProfile> Load()
+    {
+        using var stream = typeof(ProjectionP3SpecialModelCompatibility).Assembly.GetManifestResourceStream(
+            "RZeroF1.Minecraft.Projection.p3-compatibility.json")
+            ?? throw new InvalidDataException("Missing P3 compatibility specification.");
+        using var document = JsonDocument.Parse(stream);
+        var root = document.RootElement;
+        if (root.GetProperty("schema").GetInt32() != 1 || string.IsNullOrWhiteSpace(root.GetProperty("evidenceId").GetString()))
+            throw new InvalidDataException("Unknown P3 compatibility specification.");
+        var registry = ProjectionRenderCapabilityRegistry.Vanilla;
+        var memberships = new Dictionary<(string Version, string Recipe), ProjectionSpecialModelProfile>();
+        foreach (var group in root.GetProperty("groups").EnumerateArray())
+        {
+            var id = group.GetProperty("id").GetString()!;
+            var digest = group.GetProperty("evidenceSha256").GetString()!;
+            if (digest.Length != 64 || digest.Any(character => !char.IsAsciiHexDigit(character)) ||
+                !Enum.TryParse<ProjectionSpecialGeometry>(group.GetProperty("geometry").GetString(), out var geometry) ||
+                !Enum.TryParse<ProjectionSpecialResources>(group.GetProperty("resources").GetString(), out var resources))
+                throw new InvalidDataException("Invalid P3 mechanism group: " + id);
+            var profile = new ProjectionSpecialModelProfile(id, geometry, resources, ProjectionMaterialRole.Cutout, digest);
+            foreach (var versionId in group.GetProperty("versions").EnumerateArray().Select(value => value.GetString()!))
+            {
+                if (!registry.Versions.TryGetValue(versionId, out var version))
+                    throw new InvalidDataException("Unaudited P3 client: " + versionId);
+                foreach (var recipe in group.GetProperty("recipes").EnumerateArray().Select(value => value.GetString()!))
+                {
+                    if (!Matches(profile, recipe) || !version.Registrations.Values.Any(registration => registration.Recipe == recipe) ||
+                        !memberships.TryAdd((versionId, recipe), profile))
+                        throw new InvalidDataException("Invalid P3 mechanism membership: " + versionId + "/" + recipe);
+                }
+            }
+        }
+        return memberships.ToFrozenDictionary();
+    }
+
+    private static bool Matches(ProjectionSpecialModelProfile profile, string recipe) =>
+        (recipe, profile.Geometry, profile.Resources) switch
+        {
+            ("BannerRenderer", ProjectionSpecialGeometry.BannerSurface, ProjectionSpecialResources.Banner64) => true,
+            ("SignRenderer", ProjectionSpecialGeometry.SignBoard, ProjectionSpecialResources.Sign64) => true,
+            ("StandingSignRenderer", ProjectionSpecialGeometry.SignText, ProjectionSpecialResources.SignBlockModel) => true,
+            ("HangingSignRenderer", ProjectionSpecialGeometry.HangingSignBoard, ProjectionSpecialResources.HangingSign64) => true,
+            ("HangingSignRenderer", ProjectionSpecialGeometry.HangingSignText, ProjectionSpecialResources.HangingSignBlockModel) => true,
+            ("SkullBlockRenderer", ProjectionSpecialGeometry.SkullHead, ProjectionSpecialResources.SkullTextures) => true,
             _ => false
         };
 }
